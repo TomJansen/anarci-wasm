@@ -235,6 +235,12 @@ textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em
       <select id="outputFormat" title="Choose which format to download">
         <option value="csv" selected>CSV</option>
         <option value="anarci">ANARCI text</option>
+        <option disabled>──────────</option>
+        <option value="pim-full">PIM – Full sequence</option>
+        <option value="pim-cdr1">PIM – CDR1</option>
+        <option value="pim-cdr2">PIM – CDR2</option>
+        <option value="pim-cdr3">PIM – CDR3</option>
+        <option value="pim-cdrs">PIM – All CDRs</option>
       </select>
     </div>
     <button id="runBtn" disabled>Number sequences</button>
@@ -269,7 +275,7 @@ textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em
 </div>
 
 <script type="module">
-import init, { number_sequences_with_options, available_schemes, available_species } from './pkg/anarci_wasm.js';
+import init, { number_sequences_with_options, available_schemes, available_species, compute_pim } from './pkg/anarci_wasm.js';
 
 let wasmReady = false;
 window._showUniqueOnly = false;
@@ -913,7 +919,152 @@ function updateDownloadButton() {
 
   const outputFormat = document.getElementById('outputFormat').value;
   btn.classList.remove('hidden');
-  btn.textContent = outputFormat === 'anarci' ? 'Download ANARCI text' : 'Download CSV';
+  if (outputFormat === 'anarci') {
+    btn.textContent = 'Download ANARCI text';
+  } else if (outputFormat.startsWith('pim-')) {
+    btn.textContent = 'Download PIM';
+  } else {
+    btn.textContent = 'Download CSV';
+  }
+}
+
+// PIM is now computed in Rust via compute_pim() — JS stubs removed.
+
+function hierarchicalClusterOrder(n, distFn) {
+  if (n <= 1) return Array.from({length: n}, (_, i) => i);
+
+  const dist = Array.from({length: n}, (_, i) =>
+    Array.from({length: n}, (_, j) => i === j ? 0 : distFn(i, j))
+  );
+  const sizes = new Array(n).fill(1);
+  // Each entry is either a leaf index (number) or a nested [left, right] pair
+  const subtrees = Array.from({length: n}, (_, i) => i);
+  const active = new Set(Array.from({length: n}, (_, i) => i));
+
+  while (active.size > 1) {
+    const activeArr = [...active];
+    let minDist = Infinity, minI = -1, minJ = -1;
+    for (let ai = 0; ai < activeArr.length; ai++) {
+      for (let aj = ai + 1; aj < activeArr.length; aj++) {
+        const i = activeArr[ai], j = activeArr[aj];
+        if (dist[i][j] < minDist) { minDist = dist[i][j]; minI = i; minJ = j; }
+      }
+    }
+    const sI = sizes[minI], sJ = sizes[minJ];
+    subtrees[minI] = [subtrees[minI], subtrees[minJ]];
+    for (const k of active) {
+      if (k === minI || k === minJ) continue;
+      dist[minI][k] = dist[k][minI] =
+        (dist[minI][k] * sI + dist[minJ][k] * sJ) / (sI + sJ);
+    }
+    sizes[minI] = sI + sJ;
+    active.delete(minJ);
+  }
+
+  const order = [];
+  function traverse(node) {
+    if (typeof node === 'number') order.push(node);
+    else { traverse(node[0]); traverse(node[1]); }
+  }
+  traverse(subtrees[[...active][0]]);
+  return order;
+}
+
+function extractDomainPositionMap(domain, posFilter) {
+  const map = new Map();
+  for (const entry of domain.numbering) {
+    if (entry.amino_acid === '-') continue;
+    if (posFilter !== null && !posFilter.has(entry.position)) continue;
+    map.set(positionKey(entry.position, entry.insertion || ' '), entry.amino_acid);
+  }
+  return map;
+}
+
+function computePairwiseIdentity(mapA, mapB) {
+  const allKeys = new Set([...mapA.keys(), ...mapB.keys()]);
+  if (allKeys.size === 0) return null;
+  let matches = 0;
+  for (const key of allKeys) {
+    const a = mapA.get(key);
+    const b = mapB.get(key);
+    if (a && b && a === b) matches++;
+  }
+  return (matches / allKeys.size) * 100;
+}
+
+function buildPimCsv(results, scope, scheme) {
+  const byChain = new Map();
+
+  for (const res of results) {
+    const chainSeqCount = new Map();
+    for (const dom of res.domains) {
+      const cc = dom.chain_class;
+      const idx = chainSeqCount.get(cc) || 0;
+      chainSeqCount.set(cc, idx + 1);
+      const label = idx > 0 ? `${res.id}_${cc}${idx + 1}` : res.id;
+
+      // K (kappa) and L (lambda) share the same CDR position ranges
+      const cdrCC = (cc === 'K' || cc === 'L') ? 'L' : cc;
+      const ranges = (CDR_RANGES[scheme] || {})[cdrCC] || [];
+
+      let posFilter = null;
+      if (scope === 'cdr1' || scope === 'cdr2' || scope === 'cdr3') {
+        const cdrIdx = scope === 'cdr1' ? 0 : scope === 'cdr2' ? 1 : 2;
+        posFilter = new Set();
+        if (cdrIdx < ranges.length) {
+          const [start, end] = ranges[cdrIdx];
+          for (let p = start; p <= end; p++) posFilter.add(p);
+        }
+      } else if (scope === 'cdrs') {
+        posFilter = new Set();
+        for (const [start, end] of ranges) {
+          for (let p = start; p <= end; p++) posFilter.add(p);
+        }
+      }
+
+      const posMap = extractDomainPositionMap(dom, posFilter);
+      if (!byChain.has(cc)) byChain.set(cc, []);
+      byChain.get(cc).push({ label, posMap });
+    }
+  }
+
+  if (byChain.size === 0) return '';
+
+  const scopeLabel = scope === 'full' ? 'Full sequence'
+    : scope === 'cdr1' ? 'CDR1'
+    : scope === 'cdr2' ? 'CDR2'
+    : scope === 'cdr3' ? 'CDR3'
+    : 'All CDRs';
+
+  const lines = [];
+  for (const [chainClass, entries] of byChain) {
+    if (lines.length > 0) lines.push('');
+    const n = entries.length;
+
+    // Precompute full identity matrix
+    const identMatrix = Array.from({length: n}, (_, i) =>
+      Array.from({length: n}, (_, j) => {
+        if (i === j) return 100;
+        return computePairwiseIdentity(entries[i].posMap, entries[j].posMap) ?? 0;
+      })
+    );
+
+    // Reorder by hierarchical clustering (UPGMA, distance = 100 - identity)
+    const order = hierarchicalClusterOrder(n, (i, j) => 100 - identMatrix[i][j]);
+    const reordered = order.map(i => entries[i]);
+
+    lines.push(`# Chain: ${chainClass} | Scope: ${scopeLabel} | Scheme: ${scheme} | N=${n}`);
+    lines.push(['', ...reordered.map(e => csvEscape(e.label))].join(','));
+    for (let i = 0; i < n; i++) {
+      const row = [csvEscape(reordered[i].label)];
+      for (let j = 0; j < n; j++) {
+        row.push(identMatrix[order[i]][order[j]].toFixed(2));
+      }
+      lines.push(row.join(','));
+    }
+  }
+
+  return lines.join('\n') + '\n';
 }
 
 document.getElementById('downloadBtn').addEventListener('click', () => {
@@ -921,16 +1072,27 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   const scheme = window._lastScheme || document.getElementById('scheme').value;
   const { results } = getRenderedResults();
   const outputFormat = document.getElementById('outputFormat').value;
-  const text = outputFormat === 'anarci'
-    ? buildAnarciText(results)
-    : buildPythonStyleCsv(results);
-  const extension = outputFormat === 'anarci' ? 'anarci' : 'csv';
-  const mimeType = outputFormat === 'anarci' ? 'text/plain' : 'text/csv';
+
+  let text, mimeType, filename;
+  if (outputFormat === 'anarci') {
+    text = buildAnarciText(results);
+    mimeType = 'text/plain';
+    filename = `anarci_${scheme}.anarci`;
+  } else if (outputFormat.startsWith('pim-')) {
+    const scope = outputFormat.slice(4);
+    text = compute_pim(JSON.stringify(results), scope, scheme);
+    mimeType = 'text/csv';
+    filename = `anarci_pim_${scope}_${scheme}.csv`;
+  } else {
+    text = buildPythonStyleCsv(results);
+    mimeType = 'text/csv';
+    filename = `anarci_${scheme}.csv`;
+  }
 
   const blob = new Blob([text], { type: mimeType });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `anarci_${scheme}.${extension}`;
+  a.download = filename;
   a.click();
 });
 

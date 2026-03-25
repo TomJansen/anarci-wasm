@@ -14,7 +14,7 @@ use hmm::{HmmDatabase, ViterbiHit};
 use schemes::{chain_type_to_class, number_sequence, resolve_scheme_name};
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 /// Embedded HMM database (compiled into the WASM binary)
@@ -623,6 +623,205 @@ pub fn available_species() -> String {
 #[wasm_bindgen]
 pub fn num_profiles() -> usize {
     get_db().profiles.len()
+}
+
+// ── PIM + UPGMA clustering ────────────────────────────────────────────────────
+
+enum PimTree {
+    Leaf(usize),
+    Node(Box<PimTree>, Box<PimTree>),
+}
+
+impl PimTree {
+    fn leaves(&self, out: &mut Vec<usize>) {
+        match self {
+            PimTree::Leaf(i) => out.push(*i),
+            PimTree::Node(l, r) => { l.leaves(out); r.leaves(out); }
+        }
+    }
+}
+
+fn upgma_order(n: usize, dist: &mut Vec<Vec<f64>>) -> Vec<usize> {
+    if n <= 1 { return (0..n).collect(); }
+    let mut sizes = vec![1usize; n];
+    let mut trees: Vec<Option<PimTree>> = (0..n).map(|i| Some(PimTree::Leaf(i))).collect();
+    let mut active = vec![true; n];
+    for _ in 0..n - 1 {
+        let (mut min_d, mut mi, mut mj) = (f64::INFINITY, 0, 0);
+        for i in 0..n {
+            if !active[i] { continue; }
+            for j in i + 1..n {
+                if active[j] && dist[i][j] < min_d { min_d = dist[i][j]; mi = i; mj = j; }
+            }
+        }
+        let (si, sj) = (sizes[mi], sizes[mj]);
+        for k in 0..n {
+            if !active[k] || k == mi || k == mj { continue; }
+            let d = (dist[mi][k] * si as f64 + dist[mj][k] * sj as f64) / (si + sj) as f64;
+            dist[mi][k] = d; dist[k][mi] = d;
+        }
+        let (ti, tj) = (trees[mi].take().unwrap(), trees[mj].take().unwrap());
+        trees[mi] = Some(PimTree::Node(Box::new(ti), Box::new(tj)));
+        sizes[mi] = si + sj;
+        active[mj] = false;
+    }
+    let root = active.iter().position(|&a| a).unwrap();
+    let mut order = Vec::with_capacity(n);
+    trees[root].as_ref().unwrap().leaves(&mut order);
+    order
+}
+
+fn pim_cdr_ranges(scheme: &str, chain_class: &str) -> Vec<(i32, i32)> {
+    let cc = if chain_class == "K" { "L" } else { chain_class };
+    match (scheme, cc) {
+        ("imgt", _)       => vec![(27, 38), (56, 65), (105, 117)],
+        ("chothia", "H")  => vec![(26, 32), (52, 56), (95, 102)],
+        ("chothia", _)    => vec![(24, 34), (50, 56), (89, 97)],
+        ("kabat", "H")    => vec![(31, 35), (50, 65), (95, 102)],
+        ("kabat", _)      => vec![(24, 34), (50, 56), (89, 97)],
+        ("martin", "H")   => vec![(26, 32), (52, 56), (95, 102)],
+        ("martin", _)     => vec![(24, 34), (50, 56), (89, 97)],
+        ("aho", _)        => vec![(25, 42), (58, 77), (107, 138)],
+        ("wolfguy", "H")  => vec![(151, 199), (251, 299), (331, 399)],
+        ("wolfguy", _)    => vec![(551, 599), (651, 699), (751, 799)],
+        _                 => vec![],
+    }
+}
+
+fn pim_pos_filter(scope: &str, scheme: &str, chain_class: &str) -> Option<HashSet<i32>> {
+    if scope == "full" { return None; }
+    let ranges = pim_cdr_ranges(scheme, chain_class);
+    let mut f = HashSet::new();
+    match scope {
+        "cdr1" => { if let Some(&(s, e)) = ranges.get(0) { for p in s..=e { f.insert(p); } } }
+        "cdr2" => { if let Some(&(s, e)) = ranges.get(1) { for p in s..=e { f.insert(p); } } }
+        "cdr3" => { if let Some(&(s, e)) = ranges.get(2) { for p in s..=e { f.insert(p); } } }
+        "cdrs" => { for &(s, e) in &ranges { for p in s..=e { f.insert(p); } } }
+        _ => {}
+    }
+    Some(f)
+}
+
+fn pim_csv_escape(s: &str) -> String {
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+#[wasm_bindgen]
+pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
+    let results: Vec<serde_json::Value> = match serde_json::from_str(results_json) {
+        Ok(r) => r,
+        Err(_) => return String::new(),
+    };
+
+    type PosMap = HashMap<(i32, String), char>;
+    let mut chain_order: Vec<String> = Vec::new();
+    let mut by_chain: HashMap<String, Vec<(String, PosMap)>> = HashMap::new();
+
+    for res in &results {
+        let id = res["id"].as_str().unwrap_or("").to_string();
+        let domains = match res["domains"].as_array() {
+            Some(d) => d,
+            None => continue,
+        };
+        let mut chain_seq_count: HashMap<String, usize> = HashMap::new();
+        for dom in domains {
+            let chain_class = match dom["chain_class"].as_str() {
+                Some(cc) if !cc.is_empty() => cc,
+                _ => continue,
+            };
+            let count = chain_seq_count.entry(chain_class.to_string()).or_insert(0);
+            let label = if *count > 0 {
+                format!("{}_{}{}", id, chain_class, *count + 1)
+            } else {
+                id.clone()
+            };
+            *count += 1;
+
+            let pos_filter = pim_pos_filter(scope, scheme, chain_class);
+            let mut pos_map: PosMap = HashMap::new();
+            if let Some(numbering) = dom["numbering"].as_array() {
+                for entry in numbering {
+                    let aa_str = entry["amino_acid"].as_str().unwrap_or("-");
+                    if aa_str == "-" { continue; }
+                    let pos = entry["position"].as_i64().unwrap_or(0) as i32;
+                    if let Some(ref f) = pos_filter {
+                        if !f.contains(&(pos as i32)) { continue; }
+                    }
+                    let ins = entry["insertion"].as_str().unwrap_or(" ").to_string();
+                    let aa = aa_str.chars().next().unwrap_or('-');
+                    pos_map.insert((pos, ins), aa);
+                }
+            }
+            if !by_chain.contains_key(chain_class) {
+                chain_order.push(chain_class.to_string());
+                by_chain.insert(chain_class.to_string(), Vec::new());
+            }
+            by_chain.get_mut(chain_class).unwrap().push((label, pos_map));
+        }
+    }
+
+    if by_chain.is_empty() { return String::new(); }
+
+    let scope_label = match scope {
+        "full" => "Full sequence", "cdr1" => "CDR1", "cdr2" => "CDR2",
+        "cdr3" => "CDR3", "cdrs" => "All CDRs", _ => scope,
+    };
+
+    let mut output = String::new();
+    for (ci, chain_class) in chain_order.iter().enumerate() {
+        if ci > 0 { output.push('\n'); }
+        let entries = by_chain.get(chain_class).unwrap();
+        let n = entries.len();
+
+        // Pairwise identity matrix
+        let mut ident = vec![vec![0.0f64; n]; n];
+        for i in 0..n {
+            ident[i][i] = 100.0;
+            for j in i + 1..n {
+                let all_keys: HashSet<&(i32, String)> =
+                    entries[i].1.keys().chain(entries[j].1.keys()).collect();
+                let total = all_keys.len();
+                let matches = all_keys.iter()
+                    .filter(|&&k| matches!(
+                        (entries[i].1.get(k), entries[j].1.get(k)),
+                        (Some(a), Some(b)) if a == b
+                    ))
+                    .count();
+                let id = if total == 0 { 0.0 } else { matches as f64 / total as f64 * 100.0 };
+                ident[i][j] = id; ident[j][i] = id;
+            }
+        }
+
+        // UPGMA on distance = 100 − identity
+        let mut dist: Vec<Vec<f64>> = ident.iter()
+            .map(|row| row.iter().map(|&x| 100.0 - x).collect())
+            .collect();
+        let order = upgma_order(n, &mut dist);
+
+        output.push_str(&format!(
+            "# Chain: {} | Scope: {} | Scheme: {} | N={}\n",
+            chain_class, scope_label, scheme, n
+        ));
+        output.push(',');
+        for (col, &oi) in order.iter().enumerate() {
+            if col > 0 { output.push(','); }
+            output.push_str(&pim_csv_escape(&entries[oi].0));
+        }
+        output.push('\n');
+        for &oi in &order {
+            output.push_str(&pim_csv_escape(&entries[oi].0));
+            for &oj in &order {
+                output.push(',');
+                output.push_str(&format!("{:.2}", ident[oi][oj]));
+            }
+            output.push('\n');
+        }
+    }
+    output
 }
 
 #[cfg(test)]
