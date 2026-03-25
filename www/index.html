@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ANARCI - Antibody Numbering (WASM)</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #f5f5f5; color: #333; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 1.5em; margin-bottom: 4px; }
+.subtitle { color: #666; margin-bottom: 20px; font-size: 0.9em; }
+.controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 16px; }
+.control-group { display: flex; flex-direction: column; gap: 4px; }
+.control-group label { font-size: 0.8em; font-weight: 600; color: #555; }
+.control-note { font-size: 0.75em; color: #777; }
+select, button, input[type="number"] { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9em; }
+select { min-width: 120px; }
+input[type="number"] { width: 80px; }
+button { background: #2563eb; color: white; border: none; cursor: pointer; font-weight: 600; }
+button:hover { background: #1d4ed8; }
+button:disabled { background: #94a3b8; cursor: not-allowed; }
+.secondary-btn { background: #64748b; }
+.secondary-btn:hover { background: #475569; }
+.toggle-active { background: #0f766e; }
+.toggle-active:hover { background: #115e59; }
+.input-area { display: flex; gap: 12px; margin-bottom: 16px; }
+textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em; padding: 12px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; }
+.file-drop { border: 2px dashed #ccc; border-radius: 4px; padding: 20px; text-align: center; color: #888; cursor: pointer; min-width: 250px; display: flex; align-items: center; justify-content: center; }
+.file-drop:hover, .file-drop.dragover { border-color: #2563eb; color: #2563eb; }
+.file-drop input { display: none; }
+#status { padding: 8px; font-size: 0.85em; color: #666; }
+#status.error { color: #dc2626; }
+#status.success { color: #16a34a; }
+.results { margin-top: 16px; }
+.duplicate-map {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+.duplicate-map.hidden { display: none; }
+.duplicate-map-header {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  border-bottom: 1px solid #eee;
+}
+.duplicate-map-header:hover {
+  background: #f8fafc;
+}
+.duplicate-map-header h2 {
+  font-size: 0.95em;
+  margin: 0;
+}
+.duplicate-map-toggle {
+  background: #e2e8f0;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.82em;
+}
+.duplicate-map-toggle:hover {
+  background: #cbd5e1;
+}
+.duplicate-map-body {
+  padding: 12px 14px;
+}
+.duplicate-map-body.hidden {
+  display: none;
+}
+.duplicate-map-body p {
+  font-size: 0.84em;
+  color: #555;
+  margin-bottom: 8px;
+}
+.duplicate-map-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84em;
+}
+.duplicate-map-table th,
+.duplicate-map-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-top: 1px solid #eee;
+}
+.duplicate-map-table th {
+  color: #555;
+  font-weight: 600;
+  border-top: none;
+}
+.duplicate-expand-btn {
+  background: #e2e8f0;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.82em;
+}
+.duplicate-expand-btn:hover {
+  background: #cbd5e1;
+}
+.duplicate-detail-row.hidden {
+  display: none;
+}
+.duplicate-detail-cell {
+  background: #f8fafc;
+}
+.duplicate-detail-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.duplicate-detail-list li {
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.seq-result { background: white; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 12px; }
+.seq-header { padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #eee; font-weight: 600; font-size: 0.9em; cursor: pointer; display: flex; justify-content: space-between; }
+.seq-header:hover { background: #f1f5f9; }
+.credits { margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 0.8em; color: #666; }
+.credits a { color: #2563eb; text-decoration: none; }
+.credits a:hover { text-decoration: underline; }
+.domain-info { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 0.85em; color: #555; }
+.domain-info span { margin-right: 16px; }
+.domain-info .chain-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-weight: 600; font-size: 0.8em; }
+.chain-H { background: #dbeafe; color: #1d4ed8; }
+.chain-L { background: #fce7f3; color: #be185d; }
+.chain-A, .chain-B, .chain-G, .chain-D { background: #d1fae5; color: #047857; }
+.numbering-table {
+  width: 100%;
+  padding: 8px 14px 14px;
+}
+.numbering-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0;
+}
+.residue-cell {
+  width: 42px;
+  padding: 4px 0 6px;
+  text-align: center;
+  border-bottom: 1px solid #eee;
+  font-family: monospace;
+}
+.residue-aa {
+  display: block;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: #333;
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+.residue-label {
+  display: block;
+  font-size: 0.75em;
+  color: #888;
+  line-height: 1.1;
+}
+.residue-cell.gap .residue-aa {
+  color: #ddd;
+}
+.residue-cell.cdr1 .residue-aa {
+  background: #fde68a;
+}
+.residue-cell.cdr2 .residue-aa {
+  background: #bfdbfe;
+}
+.residue-cell.cdr3 .residue-aa {
+  background: #fecdd3;
+}
+.download-btn { background: #059669; }
+.download-btn:hover { background: #047857; }
+.hidden { display: none; }
+.loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ANARCI</h1>
+  <p class="subtitle">Antibody Numbering and Receptor ClassIfication &mdash; WebAssembly Edition</p>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>Scheme</label>
+      <select id="scheme">
+        <option value="imgt" selected>IMGT</option>
+        <option value="chothia">Chothia</option>
+        <option value="kabat">Kabat</option>
+        <option value="martin">Martin</option>
+        <option value="aho">AHo</option>
+        <option value="wolfguy">Wolfguy</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Bit score threshold</label>
+      <input type="number" id="threshold" value="80" min="0" step="5">
+    </div>
+    <div class="control-group">
+      <label>Input type</label>
+      <select id="inputType" title="Choose whether the FASTA contains amino acids or DNA">
+        <option value="protein" selected>Protein FASTA</option>
+        <option value="dna">DNA FASTA (auto-translate 6 frames)</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Germline species</label>
+      <select id="speciesFilter" title="Optional germline filter">
+        <option value="">All species</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Restrict to</label>
+      <select id="restrictFilter" title="Restrict recognised receptor chain types">
+        <option value="">All receptor chains</option>
+        <option value="ig">Antibodies (IG)</option>
+        <option value="tr">T-cell receptors (TR)</option>
+        <option value="heavy">Heavy chain only</option>
+        <option value="light">Light chains only (K/L)</option>
+        <option value="H">Heavy (H)</option>
+        <option value="K">Kappa (K)</option>
+        <option value="L">Lambda (L)</option>
+        <option value="A">Alpha (A)</option>
+        <option value="B">Beta (B)</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Export format</label>
+      <select id="outputFormat" title="Choose which format to download">
+        <option value="csv" selected>CSV</option>
+        <option value="anarci">ANARCI text</option>
+      </select>
+    </div>
+    <button id="runBtn" disabled>Number sequences</button>
+    <button id="uniqueToggleBtn" type="button" class="secondary-btn" disabled>Show unique only</button>
+    <button id="downloadBtn" class="download-btn hidden">Download CSV</button>
+    <button id="resetBtn" type="button" class="secondary-btn">Reset</button>
+  </div>
+
+  <div class="input-area">
+    <textarea id="fastaInput" placeholder=">sequence_1&#10;EVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS&#10;&#10;Paste protein or DNA FASTA here, or drag files..."></textarea>
+    <div class="file-drop" id="fileDrop">
+      <div>
+        <p>Drop protein or DNA FASTA files here</p>
+        <p style="font-size:0.8em; margin-top:4px">or click to browse multiple files</p>
+        <input type="file" id="fileInput" accept=".fasta,.fa,.faa,.fna,.txt" multiple>
+      </div>
+    </div>
+  </div>
+
+  <div id="status">Loading WASM module...</div>
+  <div id="duplicateMap" class="duplicate-map hidden"></div>
+  <div id="results" class="results"></div>
+  <div class="credits">
+    This WebAssembly version of ANARCI is written in Rust, and is based on
+    <a href="https://github.com/oxpig/ANARCI" target="_blank" rel="noopener noreferrer">ANARCI</a>
+    (BSD 3-Clause) and powered by
+    <a href="https://crates.io/crates/genomic-system-finder-hmm" target="_blank" rel="noopener noreferrer">genomic-system-finder-hmm</a>
+    (GPL-3.0-or-later).
+    </br></br>
+    Made by <a href="https://github.com/TomJansen" target="_blank" rel="noopener noreferrer">Tom</a>
+  </div>
+</div>
+
+<script type="module">
+import init, { number_sequences_with_options, available_schemes, available_species } from './pkg/anarci_wasm.js';
+
+let wasmReady = false;
+window._showUniqueOnly = false;
+window._duplicateMapCollapsed = false;
+
+async function initWasm() {
+  try {
+    await init();
+    populateSpeciesFilter();
+    document.getElementById('status').textContent = '';
+    document.getElementById('status').className = '';
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('uniqueToggleBtn').disabled = false;
+    wasmReady = true;
+  } catch(e) {
+    document.getElementById('status').textContent = 'Failed to load WASM: ' + e.message;
+    document.getElementById('status').className = 'error';
+  }
+}
+
+function populateSpeciesFilter() {
+  const speciesFilter = document.getElementById('speciesFilter');
+  const species = JSON.parse(available_species());
+  speciesFilter.innerHTML = '<option value="">All species</option>';
+  for (const entry of species) {
+    const option = document.createElement('option');
+    option.value = entry;
+    option.textContent = entry;
+    speciesFilter.appendChild(option);
+  }
+}
+
+// File handling
+const fileDrop = document.getElementById('fileDrop');
+const fileInput = document.getElementById('fileInput');
+const fastaInput = document.getElementById('fastaInput');
+
+fileDrop.addEventListener('click', () => fileInput.click());
+fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('dragover'); });
+fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('dragover'));
+fileDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  fileDrop.classList.remove('dragover');
+  if (e.dataTransfer.files.length) readFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => { if (e.target.files.length) readFiles(e.target.files); });
+
+async function readFiles(fileList) {
+  const files = Array.from(fileList);
+  const contents = await Promise.all(files.map(file => file.text()));
+  fastaInput.value = contents
+    .map(content => content.trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+// Run numbering
+document.getElementById('runBtn').addEventListener('click', runNumbering);
+document.getElementById('resetBtn').addEventListener('click', resetPage);
+document.getElementById('outputFormat').addEventListener('change', updateDownloadButton);
+document.getElementById('uniqueToggleBtn').addEventListener('click', toggleUniqueOnly);
+window.addEventListener('resize', () => {
+  if (window._lastResults) rerenderResults();
+});
+
+function runNumbering() {
+  if (!wasmReady) return;
+  const fasta = fastaInput.value.trim();
+  if (!fasta) { setStatus('Please enter FASTA sequences.', 'error'); return; }
+
+  const scheme = document.getElementById('scheme').value;
+  const threshold = parseFloat(document.getElementById('threshold').value) || 80;
+  const inputTypeSelect = document.getElementById('inputType');
+  let inputType = inputTypeSelect.value;
+  if (inputType === 'protein' && fastaLooksLikeDnaOnly(fasta)) {
+    inputType = 'dna';
+    inputTypeSelect.value = 'dna';
+  }
+  const selectedSpecies = document.getElementById('speciesFilter').value;
+  const allowedSpecies = selectedSpecies ? [selectedSpecies] : [];
+  const restrict = document.getElementById('restrictFilter').value;
+
+  const statusPrefix = inputTypeSelect.value === 'dna' && fastaLooksLikeDnaOnly(fasta)
+    ? 'Detected DNA FASTA. '
+    : '';
+  setStatus(`<span class="loading"></span>${statusPrefix}Numbering sequences...`, '');
+  document.getElementById('runBtn').disabled = true;
+
+  // Use setTimeout to allow UI update
+  setTimeout(() => {
+    try {
+      const t0 = performance.now();
+      const json = number_sequences_with_options(
+        fasta,
+        scheme,
+        threshold,
+        JSON.stringify(allowedSpecies),
+        restrict,
+        inputType,
+      );
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+      const results = JSON.parse(json);
+
+      const nDomains = results.reduce((s, r) => s + r.domains.length, 0);
+      setStatus(
+        `Numbered ${nDomains} ${pluralize(nDomains, 'domain')} in ${results.length} ${pluralize(results.length, 'sequence')} in ${elapsed}s.`,
+        'success'
+      );
+      window._lastResults = results;
+      window._lastScheme = scheme;
+      rerenderResults();
+    } catch(e) {
+      setStatus('Error: ' + e.message, 'error');
+    }
+    document.getElementById('runBtn').disabled = false;
+  }, 50);
+}
+
+function resetPage() {
+  fastaInput.value = '';
+  fileInput.value = '';
+  document.getElementById('scheme').value = 'imgt';
+  document.getElementById('threshold').value = '80';
+  document.getElementById('inputType').value = 'protein';
+  document.getElementById('speciesFilter').value = '';
+  document.getElementById('restrictFilter').value = '';
+  document.getElementById('outputFormat').value = 'csv';
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('duplicateMap').innerHTML = '';
+  document.getElementById('duplicateMap').classList.add('hidden');
+  document.getElementById('downloadBtn').classList.add('hidden');
+  window._lastResults = null;
+  window._lastScheme = null;
+  window._showUniqueOnly = false;
+  window._duplicateMapCollapsed = false;
+  updateUniqueToggleButton();
+
+  if (wasmReady) {
+    setStatus('', '');
+  } else {
+    setStatus('Loading WASM module...', '');
+  }
+}
+
+function setStatus(html, cls) {
+  const el = document.getElementById('status');
+  el.innerHTML = html;
+  el.className = cls;
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return count === 1 ? singular : plural;
+}
+
+function fastaLooksLikeDnaOnly(fastaText) {
+  const seq = fastaText
+    .split('\n')
+    .filter(line => line && !line.startsWith('>'))
+    .join('')
+    .replace(/\s+/g, '')
+    .replace(/[-.]/g, '')
+    .toUpperCase();
+
+  if (seq.length < 30) return false;
+  return /^[ACGTUNRYKMSWBDHV]+$/.test(seq);
+}
+
+// IMGT CDR definitions for highlighting
+const CDR_RANGES = {
+  imgt: { H: [[27,38],[56,65],[105,117]], L: [[27,38],[56,65],[105,117]] },
+  chothia: { H: [[26,32],[52,56],[95,102]], L: [[24,34],[50,56],[89,97]] },
+  kabat: { H: [[31,35],[50,65],[95,102]], L: [[24,34],[50,56],[89,97]] },
+  martin: { H: [[26,32],[52,56],[95,102]], L: [[24,34],[50,56],[89,97]] },
+  aho: { H: [[25,42],[58,77],[107,138]], L: [[25,42],[58,77],[107,138]] },
+  wolfguy: { H: [[151,199],[251,299],[331,399]], L: [[551,599],[651,699],[751,799]] },
+};
+
+function cdrClassForPosition(pos, scheme, chainClass) {
+  const ranges = (CDR_RANGES[scheme] || {})[chainClass] || [];
+  for (let i = 0; i < ranges.length; i += 1) {
+    const [start, end] = ranges[i];
+    if (pos >= start && pos <= end) {
+      return `cdr${i + 1}`;
+    }
+  }
+  return '';
+}
+
+function resultLabel(res, index) {
+  return `${res.id} [${index + 1}]`;
+}
+
+function domainResidueSequence(domain) {
+  return (domain.numbering || [])
+    .map(entry => entry.amino_acid)
+    .filter(aa => aa && aa !== '-')
+    .join('');
+}
+
+function duplicateKeyForResult(res) {
+  if (res.input_type === 'dna' && Array.isArray(res.domains) && res.domains.length > 0) {
+    return res.domains
+      .map(domain => `${domain.chain_type}:${domainResidueSequence(domain)}`)
+      .join('|')
+      .toUpperCase();
+  }
+
+  return (res.sequence || '').toUpperCase();
+}
+
+function summarizeResults(results) {
+  const seen = new Map();
+  const uniqueResults = [];
+  const duplicateMappings = [];
+
+  results.forEach((res, index) => {
+    const key = duplicateKeyForResult(res);
+    if (!seen.has(key)) {
+      seen.set(key, { canonicalIndex: index, canonical: res });
+      uniqueResults.push(res);
+      return;
+    }
+
+    const match = seen.get(key);
+    duplicateMappings.push({
+      duplicateIndex: index,
+      duplicate: res,
+      canonicalIndex: match.canonicalIndex,
+      canonical: match.canonical,
+    });
+  });
+
+  return { uniqueResults, duplicateMappings };
+}
+
+function groupDuplicateMappings(duplicateMappings) {
+  const groups = new Map();
+
+  duplicateMappings.forEach(mapping => {
+    const key = mapping.canonicalIndex;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        canonicalIndex: mapping.canonicalIndex,
+        canonical: mapping.canonical,
+        duplicates: [],
+      });
+    }
+    groups.get(key).duplicates.push(mapping);
+  });
+
+  return Array.from(groups.values()).sort((a, b) => a.canonicalIndex - b.canonicalIndex);
+}
+
+function getRenderedResults() {
+  const results = window._lastResults || [];
+  const summary = summarizeResults(results);
+  return {
+    results: window._showUniqueOnly ? summary.uniqueResults : results,
+    summary,
+  };
+}
+
+function updateUniqueToggleButton() {
+  const btn = document.getElementById('uniqueToggleBtn');
+  btn.textContent = window._showUniqueOnly ? 'Show all sequences' : 'Show unique only';
+  btn.classList.toggle('toggle-active', window._showUniqueOnly);
+}
+
+function updateDuplicateMapToggle(container) {
+  const body = container.querySelector('.duplicate-map-body');
+  const toggle = container.querySelector('.duplicate-map-toggle');
+  if (!body || !toggle) return;
+
+  body.classList.toggle('hidden', window._duplicateMapCollapsed);
+  toggle.setAttribute('aria-expanded', String(!window._duplicateMapCollapsed));
+  toggle.textContent = window._duplicateMapCollapsed ? 'Expand' : 'Collapse';
+}
+
+function toggleUniqueOnly() {
+  if (!window._lastResults) return;
+  window._showUniqueOnly = !window._showUniqueOnly;
+  rerenderResults();
+}
+
+function renderDuplicateMap(summary) {
+  const container = document.getElementById('duplicateMap');
+  const { uniqueResults, duplicateMappings } = summary;
+
+  if (!window._lastResults || duplicateMappings.length === 0) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+
+  const anyDna = (window._lastResults || []).some(res => res.input_type === 'dna');
+  const duplicateCount = duplicateMappings.length;
+  const totalCount = window._lastResults.length;
+  const intro = window._showUniqueOnly
+    ? `Showing ${uniqueResults.length} unique ${pluralize(uniqueResults.length, 'sequence')} out of ${totalCount} total input ${pluralize(totalCount, 'sequence')}, with ${duplicateCount} duplicate ${pluralize(duplicateCount, 'sequence')} grouped under those unique entries.`
+    : `Found ${uniqueResults.length} unique ${pluralize(uniqueResults.length, 'sequence')} and ${duplicateCount} duplicate ${pluralize(duplicateCount, 'sequence')} across ${totalCount} total input ${pluralize(totalCount, 'sequence')}.`;
+  const groups = groupDuplicateMappings(duplicateMappings);
+
+  const rows = groups
+    .map((group, groupIndex) => {
+      const detailId = `duplicate-detail-${groupIndex}`;
+      const duplicateCount = group.duplicates.length;
+      const amount = duplicateCount + 1;
+      const detailItems = group.duplicates
+        .map(
+          mapping =>
+            `<li>${escHtml(resultLabel(mapping.duplicate, mapping.duplicateIndex))}</li>`
+        )
+        .join('');
+
+      return `
+        <tr>
+          <td><strong>${escHtml(resultLabel(group.canonical, group.canonicalIndex))}</strong></td>
+          <td>
+            <button
+              type="button"
+              class="duplicate-expand-btn"
+              aria-expanded="false"
+              aria-controls="${detailId}"
+              data-detail-id="${detailId}"
+            >
+              Show ${duplicateCount} ${pluralize(duplicateCount, 'sequence')}
+            </button>
+          </td>
+          <td>${amount}</td>
+        </tr>
+        <tr id="${detailId}" class="duplicate-detail-row hidden">
+          <td colspan="3" class="duplicate-detail-cell">
+            <ul class="duplicate-detail-list">${detailItems}</ul>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  container.innerHTML = `
+    <div class="duplicate-map-header" role="button" tabindex="0" aria-controls="duplicateMapBody">
+      <h2>Duplicate Sequence Map</h2>
+      <button type="button" class="duplicate-map-toggle" aria-expanded="true">Collapse</button>
+    </div>
+    <div id="duplicateMapBody" class="duplicate-map-body">
+      <p>${escHtml(intro)}</p>
+      ${anyDna ? '<p>For DNA inputs, duplicate grouping is based on the detected numbered domain amino-acid sequence or sequences, not the raw DNA string.</p>' : ''}
+      <table class="duplicate-map-table">
+        <thead>
+          <tr>
+            <th>Unique</th>
+            <th>Non unique</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+  container.classList.remove('hidden');
+  updateDuplicateMapToggle(container);
+
+  const header = container.querySelector('.duplicate-map-header');
+  const toggleMap = () => {
+    window._duplicateMapCollapsed = !window._duplicateMapCollapsed;
+    updateDuplicateMapToggle(container);
+  };
+  header.addEventListener('click', event => {
+    if (event.target.closest('.duplicate-expand-btn')) return;
+    if (event.target.closest('.duplicate-map-toggle')) return;
+    toggleMap();
+  });
+  header.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleMap();
+    }
+  });
+
+  container.querySelector('.duplicate-map-toggle').addEventListener('click', event => {
+    event.stopPropagation();
+    toggleMap();
+  });
+
+  container.querySelectorAll('.duplicate-expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const detailId = btn.dataset.detailId;
+      const row = container.querySelector(`#${detailId}`);
+      if (!row) return;
+      const isHidden = row.classList.toggle('hidden');
+      btn.setAttribute('aria-expanded', String(!isHidden));
+      btn.textContent = isHidden
+        ? btn.textContent.replace(/^Hide/, 'Show')
+        : btn.textContent.replace(/^Show/, 'Hide');
+    });
+  });
+}
+
+function rerenderResults() {
+  if (!window._lastResults) {
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('duplicateMap').innerHTML = '';
+    document.getElementById('duplicateMap').classList.add('hidden');
+    updateUniqueToggleButton();
+    updateDownloadButton();
+    return;
+  }
+
+  const scheme = window._lastScheme || document.getElementById('scheme').value;
+  const { results, summary } = getRenderedResults();
+  renderDuplicateMap(summary);
+  renderResults(results, scheme);
+  updateUniqueToggleButton();
+  updateDownloadButton();
+}
+
+function renderResults(results, scheme) {
+  const container = document.getElementById('results');
+  container.innerHTML = '';
+
+  for (const res of results) {
+    const div = document.createElement('div');
+    div.className = 'seq-result';
+
+    const nDom = res.domains.length;
+    const header = document.createElement('div');
+    header.className = 'seq-header';
+    header.innerHTML = `<span>${escHtml(res.id)}</span><span>${nDom ? `${nDom} ${pluralize(nDom, 'domain')}` : 'No domains found'}</span>`;
+
+    const body = document.createElement('div');
+
+    for (const dom of res.domains) {
+      // Domain info bar
+      const info = document.createElement('div');
+      info.className = 'domain-info';
+      const badge = `chain-${dom.chain_class}`;
+      info.innerHTML = `
+        <span class="chain-badge ${badge}">${dom.chain_type}</span>
+        <span>Species: ${dom.species}</span>
+        <span>Score: ${dom.bit_score.toFixed(1)}</span>
+        <span>E-value: ${dom.evalue_text || dom.evalue.toExponential(1)}</span>
+        <span>${dom.translation_frame ? 'AA region' : 'Region'}: ${dom.seq_start+1}-${dom.seq_end}</span>
+        ${dom.translation_frame ? `<span>Frame: ${dom.translation_frame}</span>` : ''}
+        ${dom.nt_start != null && dom.nt_end != null ? `<span>NT region: ${dom.nt_start + 1}-${dom.nt_end}</span>` : ''}
+      `;
+      body.appendChild(info);
+
+      // Numbering table (chunked into rows of 40)
+      const tableDiv = document.createElement('div');
+      tableDiv.className = 'numbering-table';
+
+      const residues = dom.numbering.filter(e => e.amino_acid !== '-');
+      const grid = document.createElement('div');
+      grid.className = 'numbering-grid';
+
+      for (const e of residues) {
+        const cell = document.createElement('div');
+        const cdr = cdrClassForPosition(e.position, scheme, dom.chain_class);
+        const cdrClass = cdr ? ` ${cdr}` : '';
+        const gap = e.amino_acid === '-' ? ' gap' : '';
+        cell.className = `residue-cell${cdrClass}${gap}`;
+        cell.innerHTML = `
+          <span class="residue-aa">${escHtml(e.amino_acid)}</span>
+          <span class="residue-label">${escHtml(`${e.position}${e.insertion.trim() || ''}`)}</span>
+        `;
+        grid.appendChild(cell);
+      }
+
+      tableDiv.appendChild(grid);
+      body.appendChild(tableDiv);
+    }
+
+    // Toggle collapse
+    let collapsed = false;
+    header.addEventListener('click', () => {
+      collapsed = !collapsed;
+      body.style.display = collapsed ? 'none' : '';
+    });
+
+    div.appendChild(header);
+    div.appendChild(body);
+    container.appendChild(div);
+  }
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function csvEscape(value) {
+  const s = String(value ?? '');
+  if (/[",\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function positionKey(position, insertion) {
+  return `${position}\u0000${insertion}`;
+}
+
+function positionLabel(position, insertion) {
+  return `${position}${(insertion || '').trim()}`;
+}
+
+function collectPythonStylePositions(results) {
+  const posRanks = new Map();
+  const allPositions = new Map();
+
+  for (const res of results) {
+    for (const dom of res.domains) {
+      let lastPos = null;
+      let rank = 0;
+
+      for (const entry of dom.numbering) {
+        const pos = entry.position;
+        const ins = entry.insertion || ' ';
+        if (pos !== lastPos) {
+          lastPos = pos;
+          rank = 0;
+        } else {
+          rank += 1;
+        }
+
+        const key = positionKey(pos, ins);
+        posRanks.set(key, Math.max(rank, posRanks.get(key) ?? rank));
+        allPositions.set(key, { position: pos, insertion: ins });
+      }
+    }
+  }
+
+  return Array.from(allPositions.values()).sort((a, b) => {
+    if (a.position !== b.position) return a.position - b.position;
+    const rankA = posRanks.get(positionKey(a.position, a.insertion)) ?? 0;
+    const rankB = posRanks.get(positionKey(b.position, b.insertion)) ?? 0;
+    return rankA - rankB;
+  });
+}
+
+function buildPythonStyleCsv(results) {
+  const positions = collectPythonStylePositions(results);
+  const fields = [
+    'Id',
+    'domain_no',
+    'hmm_species',
+    'chain_type',
+    'e-value',
+    'score',
+    'seqstart_index',
+    'seqend_index',
+    'identity_species',
+    'v_gene',
+    'v_identity',
+    'j_gene',
+    'j_identity',
+    ...positions.map(p => positionLabel(p.position, p.insertion)),
+  ];
+
+  const lines = [fields.map(csvEscape).join(',')];
+
+  for (const res of results) {
+    for (const dom of res.domains) {
+      const numbered = new Map(
+        dom.numbering.map(e => [positionKey(e.position, e.insertion || ' '), e.amino_acid])
+      );
+
+      const row = [
+        res.id,
+        dom.domain_index,
+        dom.species,
+        dom.chain_type,
+        dom.evalue_text || dom.evalue,
+        dom.bit_score.toFixed(1),
+        dom.seq_start,
+        dom.seq_end > dom.seq_start ? dom.seq_end - 1 : dom.seq_end,
+        dom.identity_species ?? '',
+        dom.v_gene ?? '',
+        dom.v_identity ? dom.v_identity.toFixed(2) : '',
+        dom.j_gene ?? '',
+        dom.j_identity ? dom.j_identity.toFixed(2) : '',
+        ...positions.map(p => numbered.get(positionKey(p.position, p.insertion)) ?? '-'),
+      ];
+
+      lines.push(row.map(csvEscape).join(','));
+    }
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+function buildAnarciText(results) {
+  const lines = [];
+
+  for (const res of results) {
+    lines.push(`# ${res.id}`);
+
+    if (res.domains.length > 0) {
+      lines.push('# ANARCI numbered');
+    }
+
+    for (const [index, dom] of res.domains.entries()) {
+      const seqEnd = dom.seq_end > dom.seq_start ? dom.seq_end - 1 : dom.seq_end;
+      lines.push(`# Domain ${index + 1} of ${res.domains.length}`);
+      lines.push('# Most significant HMM hit');
+      lines.push('#|species|chain_type|e-value|score|seqstart_index|seqend_index|');
+      lines.push(
+        `#|${dom.species}|${dom.chain_type}|${dom.evalue_text || dom.evalue}|${dom.bit_score.toFixed(1)}|${dom.seq_start}|${seqEnd}|`
+      );
+
+      if (dom.identity_species || dom.v_gene || dom.j_gene || dom.v_identity || dom.j_identity) {
+        lines.push('# Most sequence-identical germlines');
+        lines.push('#|species|v_gene|v_identity|j_gene|j_identity|');
+        lines.push(
+          `#|${dom.identity_species || ''}|${dom.v_gene || 'unknown'}|${(dom.v_identity || 0).toFixed(2)}|${dom.j_gene || 'unknown'}|${(dom.j_identity || 0).toFixed(2)}|`
+        );
+      }
+
+      lines.push(`# Scheme = ${dom.scheme}`);
+      if (!dom.numbering.length) {
+        lines.push(`# Warning: ${dom.scheme} scheme could not be applied to this sequence.`);
+      }
+
+      for (const entry of dom.numbering) {
+        const insertion = entry.insertion || ' ';
+        lines.push(`${dom.chain_class} ${String(entry.position).padEnd(5)} ${insertion} ${entry.amino_acid}`);
+      }
+    }
+
+    lines.push('//');
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+function updateDownloadButton() {
+  const btn = document.getElementById('downloadBtn');
+  if (!window._lastResults) {
+    btn.classList.add('hidden');
+    return;
+  }
+
+  const outputFormat = document.getElementById('outputFormat').value;
+  btn.classList.remove('hidden');
+  btn.textContent = outputFormat === 'anarci' ? 'Download ANARCI text' : 'Download CSV';
+}
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  if (!window._lastResults) return;
+  const scheme = window._lastScheme || document.getElementById('scheme').value;
+  const { results } = getRenderedResults();
+  const outputFormat = document.getElementById('outputFormat').value;
+  const text = outputFormat === 'anarci'
+    ? buildAnarciText(results)
+    : buildPythonStyleCsv(results);
+  const extension = outputFormat === 'anarci' ? 'anarci' : 'csv';
+  const mimeType = outputFormat === 'anarci' ? 'text/plain' : 'text/csv';
+
+  const blob = new Blob([text], { type: mimeType });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `anarci_${scheme}.${extension}`;
+  a.click();
+});
+
+initWasm();
+</script>
+</body>
+</html>
