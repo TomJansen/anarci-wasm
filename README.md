@@ -3,6 +3,7 @@
 Antibody Numbering and Receptor ClassIfication — compiled to WebAssembly.
 
 A browser-based port of [ANARCI](https://github.com/oxpig/ANARCI) that runs entirely client-side. No server, no Python, no HMMER installation required.
+The browser UI uses Web Workers to keep numbering responsive and to parallelize multi-sequence jobs across available CPU cores.
 
 ## Supported numbering schemes
 

@@ -280,6 +280,9 @@ import init, { number_sequences_with_options, available_schemes, available_speci
 let wasmReady = false;
 window._showUniqueOnly = false;
 window._duplicateMapCollapsed = false;
+const MAX_PARALLEL_WORKERS = 4;
+let workerPoolState = null;
+let activeRunToken = 0;
 
 async function initWasm() {
   try {
@@ -332,6 +335,210 @@ async function readFiles(fileList) {
     .join('\n\n');
 }
 
+function splitFastaRecords(fastaText) {
+  const normalized = fastaText.replace(/\r\n?/g, '\n').trim();
+  if (!normalized) return [];
+
+  const records = [];
+  let current = [];
+
+  for (const line of normalized.split('\n')) {
+    if (line.startsWith('>')) {
+      if (current.length > 0) {
+        records.push(current.join('\n'));
+      }
+      current = [line];
+    } else if (current.length > 0) {
+      current.push(line);
+    }
+  }
+
+  if (current.length > 0) {
+    records.push(current.join('\n'));
+  }
+
+  return records;
+}
+
+function getWorkerCount(taskCount) {
+  const cores = navigator.hardwareConcurrency || 2;
+  return Math.max(1, Math.min(MAX_PARALLEL_WORKERS, cores, taskCount));
+}
+
+function shutdownWorkerPool() {
+  if (!workerPoolState) return;
+  for (const worker of workerPoolState.workers) {
+    worker.terminate();
+  }
+  workerPoolState = null;
+}
+
+function getWorkerPool(size) {
+  if (workerPoolState && workerPoolState.size === size) {
+    return workerPoolState;
+  }
+
+  shutdownWorkerPool();
+
+  workerPoolState = {
+    size,
+    workers: Array.from({ length: size }, () => new Worker('./worker.js', { type: 'module' })),
+  };
+  return workerPoolState;
+}
+
+window.addEventListener('beforeunload', shutdownWorkerPool);
+
+function numberSequencesOnMainThread({
+  fasta,
+  scheme,
+  threshold,
+  allowedSpeciesJson,
+  restrict,
+  inputType,
+}) {
+  const json = number_sequences_with_options(
+    fasta,
+    scheme,
+    threshold,
+    allowedSpeciesJson,
+    restrict,
+    inputType,
+  );
+  return JSON.parse(json);
+}
+
+async function numberSequencesInWorkers({
+  fasta,
+  scheme,
+  threshold,
+  allowedSpeciesJson,
+  restrict,
+  inputType,
+  statusPrefix,
+  runToken,
+}) {
+  const records = splitFastaRecords(fasta);
+  if (records.length === 0 || typeof Worker !== 'function') {
+    return {
+      results: numberSequencesOnMainThread({
+        fasta,
+        scheme,
+        threshold,
+        allowedSpeciesJson,
+        restrict,
+        inputType,
+      }),
+      workerCount: 0,
+    };
+  }
+
+  const workerCount = getWorkerCount(records.length);
+  const pool = getWorkerPool(workerCount);
+  const results = new Array(records.length).fill(null);
+  let nextTaskIndex = 0;
+  let completed = 0;
+
+  const updateProgress = () => {
+    if (runToken !== activeRunToken) return;
+    setStatus(
+      `<span class="loading"></span>${statusPrefix}Numbering ${records.length} ${pluralize(records.length, 'sequence')} using ${workerCount} ${pluralize(workerCount, 'worker')}... (${completed}/${records.length})`,
+      ''
+    );
+  };
+
+  updateProgress();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      for (const worker of pool.workers) {
+        worker.onmessage = null;
+        worker.onerror = null;
+      }
+    };
+
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      shutdownWorkerPool();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    const maybeFinish = () => {
+      if (completed !== records.length || settled) {
+        return false;
+      }
+      settled = true;
+      cleanup();
+      resolve({
+        results: results.filter(result => result !== null),
+        workerCount,
+      });
+      return true;
+    };
+
+    const dispatch = worker => {
+      if (settled) return;
+
+      const taskId = nextTaskIndex;
+      if (taskId >= records.length) {
+        maybeFinish();
+        return;
+      }
+
+      nextTaskIndex += 1;
+      worker.postMessage({
+        taskId,
+        fasta: records[taskId],
+        scheme,
+        threshold,
+        allowedSpeciesJson,
+        restrict,
+        inputType,
+      });
+    };
+
+    for (const worker of pool.workers) {
+      worker.onmessage = event => {
+        if (settled) return;
+
+        const message = event.data || {};
+        if (!message.ok) {
+          fail(message.error || 'Worker failed to number sequences.');
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(message.json);
+        } catch (error) {
+          fail(error);
+          return;
+        }
+
+        const taskId = Number(message.taskId);
+        results[taskId] = Array.isArray(parsed) ? (parsed[0] ?? null) : null;
+        completed += 1;
+        updateProgress();
+
+        if (maybeFinish()) {
+          return;
+        }
+        dispatch(worker);
+      };
+
+      worker.onerror = event => {
+        fail(event.message || 'Worker crashed.');
+      };
+
+      dispatch(worker);
+    }
+  });
+}
+
 // Run numbering
 document.getElementById('runBtn').addEventListener('click', runNumbering);
 document.getElementById('resetBtn').addEventListener('click', resetPage);
@@ -341,7 +548,7 @@ window.addEventListener('resize', () => {
   if (window._lastResults) rerenderResults();
 });
 
-function runNumbering() {
+async function runNumbering() {
   if (!wasmReady) return;
   const fasta = fastaInput.value.trim();
   if (!fasta) { setStatus('Please enter FASTA sequences.', 'error'); return; }
@@ -356,6 +563,7 @@ function runNumbering() {
   }
   const selectedSpecies = document.getElementById('speciesFilter').value;
   const allowedSpecies = selectedSpecies ? [selectedSpecies] : [];
+  const allowedSpeciesJson = JSON.stringify(allowedSpecies);
   const restrict = document.getElementById('restrictFilter').value;
 
   const statusPrefix = inputTypeSelect.value === 'dna' && fastaLooksLikeDnaOnly(fasta)
@@ -363,35 +571,72 @@ function runNumbering() {
     : '';
   setStatus(`<span class="loading"></span>${statusPrefix}Numbering sequences...`, '');
   document.getElementById('runBtn').disabled = true;
+  document.getElementById('resetBtn').disabled = true;
 
-  // Use setTimeout to allow UI update
-  setTimeout(() => {
+  const runToken = ++activeRunToken;
+
+  // Yield once so the loading state paints before any fallback main-thread work.
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  try {
+    const t0 = performance.now();
+    let results;
+    let workerCount = 0;
+
     try {
-      const t0 = performance.now();
-      const json = number_sequences_with_options(
+      const parallel = await numberSequencesInWorkers({
         fasta,
         scheme,
         threshold,
-        JSON.stringify(allowedSpecies),
+        allowedSpeciesJson,
         restrict,
         inputType,
-      );
-      const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-      const results = JSON.parse(json);
+        statusPrefix,
+        runToken,
+      });
+      results = parallel.results;
+      workerCount = parallel.workerCount;
+    } catch (error) {
+      console.warn('Falling back to main-thread numbering:', error);
+      setStatus(`<span class="loading"></span>${statusPrefix}Worker setup failed, retrying on the main thread...`, '');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      results = numberSequencesOnMainThread({
+        fasta,
+        scheme,
+        threshold,
+        allowedSpeciesJson,
+        restrict,
+        inputType,
+      });
+    }
 
-      const nDomains = results.reduce((s, r) => s + r.domains.length, 0);
-      setStatus(
-        `Numbered ${nDomains} ${pluralize(nDomains, 'domain')} in ${results.length} ${pluralize(results.length, 'sequence')} in ${elapsed}s.`,
-        'success'
-      );
-      window._lastResults = results;
-      window._lastScheme = scheme;
-      rerenderResults();
-    } catch(e) {
+    if (runToken !== activeRunToken) {
+      return;
+    }
+
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+    const nDomains = results.reduce((s, r) => s + r.domains.length, 0);
+    const parallelNote = workerCount > 0
+      ? ` using ${workerCount} ${pluralize(workerCount, 'worker')}`
+      : '';
+
+    setStatus(
+      `Numbered ${nDomains} ${pluralize(nDomains, 'domain')} in ${results.length} ${pluralize(results.length, 'sequence')} in ${elapsed}s${parallelNote}.`,
+      'success'
+    );
+    window._lastResults = results;
+    window._lastScheme = scheme;
+    rerenderResults();
+  } catch(e) {
+    if (runToken === activeRunToken) {
       setStatus('Error: ' + e.message, 'error');
     }
-    document.getElementById('runBtn').disabled = false;
-  }, 50);
+  } finally {
+    if (runToken === activeRunToken) {
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('resetBtn').disabled = false;
+    }
+  }
 }
 
 function resetPage() {
