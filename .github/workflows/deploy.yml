@@ -44,7 +44,7 @@ jobs:
       - name: Prepare site
         run: |
           mkdir -p _site
-          cp www/index.html _site/
+          cp -r www/. _site/
           cp -r pkg _site/pkg
 
       - name: Upload Pages artifact
