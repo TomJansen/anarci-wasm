@@ -43,9 +43,12 @@ jobs:
 
       - name: Prepare site
         run: |
+          rm -rf _site
           mkdir -p _site
-          cp -r www/. _site/
-          cp -r pkg _site/pkg
+          cp www/index.html _site/
+          cp www/worker.js _site/
+          mkdir -p _site/pkg
+          cp -r pkg/. _site/pkg/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
