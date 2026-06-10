@@ -23,7 +23,13 @@ pub type NumberedResidue = ((i32, String), char);
 
 /// Convert a Viterbi path into a state vector with sequence indices.
 /// Equivalent to `_hmm_alignment_to_states` in ANARCI.
-pub fn path_to_state_vector(hit: &ViterbiHit, seq_len: usize, domain_index: usize, n_domains: usize) -> Vec<StateVectorEntry> {
+pub fn path_to_state_vector(
+    hit: &ViterbiHit,
+    seq_len: usize,
+    domain_index: usize,
+    n_domains: usize,
+    hmm_length: usize,
+) -> Vec<StateVectorEntry> {
     let mut state_vector = Vec::new();
     let mut seq_idx = hit.seq_start;
 
@@ -31,9 +37,19 @@ pub fn path_to_state_vector(hit: &ViterbiHit, seq_len: usize, domain_index: usiz
 
     // Handle N-terminal extension for first domain
     // If the alignment doesn't start at state 1 and we're the first domain,
-    // extend backwards to capture unmatched N-terminal residues
+    // extend backwards to capture unmatched N-terminal residues.
+    // Mirrors Python ANARCI: `_hmm_start` there is 0-based, so this matches
+    // 2 <= hmm_start <= 5 in 1-based terms. The number of residues to extend is
+    // `_hmm_start` unless `_hmm_start > _seq_start`, in which case it becomes
+    // min(_seq_start, _hmm_start - _seq_start). With _hmm_start = hmm_start - 1
+    // and _seq_start = hit.seq_start:
     if domain_index == 0 && hmm_start > 1 && hmm_start <= 5 {
-        let n_extend = std::cmp::min(hmm_start - 1, hit.seq_start);
+        let hmm_start_0based = hmm_start - 1;
+        let n_extend = if hmm_start_0based > hit.seq_start {
+            std::cmp::min(hit.seq_start, hmm_start_0based - hit.seq_start)
+        } else {
+            hmm_start_0based
+        };
         let effective_hmm_start = hmm_start - n_extend;
         let effective_seq_start = hit.seq_start - n_extend;
 
@@ -47,10 +63,12 @@ pub fn path_to_state_vector(hit: &ViterbiHit, seq_len: usize, domain_index: usiz
         seq_idx = hit.seq_start;
     }
 
-    // Handle C-terminal extension for single domains
-    let n_c_extend = if n_domains == 1 && hit.hmm_end < 128 && hit.hmm_end > 123 {
+    // Handle C-terminal extension for single domains.
+    // Python gates on `123 < _hmm_end < _hmm_length`, where `_hmm_length` is the
+    // per-chain HMM length (127 or 128 depending on the J germline), not a hard 128.
+    let n_c_extend = if n_domains == 1 && hit.hmm_end < hmm_length && hit.hmm_end > 123 {
         let remaining_seq = seq_len - hit.seq_end;
-        let remaining_hmm = 128 - hit.hmm_end;
+        let remaining_hmm = hmm_length - hit.hmm_end;
         std::cmp::min(remaining_seq, remaining_hmm)
     } else {
         0
@@ -184,7 +202,8 @@ pub fn smooth_insertions(state_vector: Vec<StateVectorEntry>) -> Vec<StateVector
                         // N-terminal FW
                         let prefix: Vec<(usize, char)> =
                             vec![pattern[0]; buf_len.saturating_sub(3)];
-                        let skip = if buf_len >= 4 { 1 } else { 4 - buf_len.min(4) + 1 };
+                        // Python: enforced_patterns[reg][max(4-len, 1):]
+                        let skip = (4i32 - buf_len as i32).max(1) as usize;
                         let suffix: Vec<(usize, char)> = pattern[skip.min(4)..].to_vec();
                         [prefix, suffix].concat()
                     } else {
@@ -243,7 +262,7 @@ pub fn number_regions(
     rels: &mut Vec<i32>,
     n_regions: usize,
     exclude_deletions: &[usize],
-) -> (Vec<Vec<NumberedResidue>>, Option<usize>, Option<usize>) {
+) -> (Vec<Vec<NumberedResidue>>, Option<usize>, Option<usize>, bool) {
     let sv = smooth_insertions(state_vector.to_vec());
 
     let mut regions: Vec<Vec<NumberedResidue>> = (0..n_regions).map(|_| Vec::new()).collect();
@@ -337,9 +356,17 @@ pub fn number_regions(
         if insertion >= 25 && exclude_deletions.contains(&reg) {
             insertion = 0;
         }
+
+        // Python: assert insertion < 25, "Too many insertions...". For a region not
+        // in exclude_deletions the reset above does not fire, so the alphabet is
+        // exhausted. Python raises AssertionError, which callers catch and treat as
+        // "no numbering". We signal the same outcome to the scheme functions.
+        if insertion >= 25 {
+            return (regions, start_index, end_index, true);
+        }
     }
 
-    (regions, start_index, end_index)
+    (regions, start_index, end_index, false)
 }
 
 /// Fill in gaps for missing positions in the numbering.

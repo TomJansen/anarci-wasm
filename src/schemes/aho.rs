@@ -38,7 +38,7 @@ pub fn number_aho(
     let n_regions = 11;
     let exclude_deletions: Vec<usize> = vec![1, 3, 4, 5, 7, 9];
 
-    let (regions, startindex, endindex) = number_regions(
+    let (regions, startindex, endindex, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -48,6 +48,9 @@ pub fn number_aho(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), startindex, endindex);
+    }
 
     // Build the numbering assembly: regions 3,5,7,9 are renumbered (replaced with [])
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![

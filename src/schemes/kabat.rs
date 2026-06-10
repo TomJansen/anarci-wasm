@@ -42,7 +42,7 @@ pub fn number_kabat_heavy(
     let n_regions = 8;
     let exclude_deletions: Vec<usize> = vec![2, 4, 6];
 
-    let (regions, start_index, end_index) = number_regions(
+    let (regions, start_index, end_index, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -52,6 +52,9 @@ pub fn number_kabat_heavy(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), start_index, end_index);
+    }
 
     // Build numbering: regions 1, 3, 5, 7 pass through; 0, 2, 4, 6 are renumbered
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![
@@ -190,7 +193,7 @@ pub fn number_kabat_light(
     let n_regions = 7;
     let exclude_deletions: Vec<usize> = vec![1, 3, 5];
 
-    let (regions, start_index, end_index) = number_regions(
+    let (regions, start_index, end_index, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -200,6 +203,9 @@ pub fn number_kabat_light(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), start_index, end_index);
+    }
 
     // Build numbering: regions 0, 2, 4, 6 pass through; 1, 3, 5 are renumbered
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![

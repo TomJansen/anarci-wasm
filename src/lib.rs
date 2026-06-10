@@ -306,7 +306,8 @@ fn number_domains_from_hits(
 
     for (di, hit) in domains.iter().enumerate() {
         let (species, chain_type) = parse_hmm_name(&hit.hmm_name);
-        let state_vector = path_to_state_vector(hit, sequence.len(), di, domains.len());
+        let hmm_length = germline::get_hmm_length(&species, &chain_type);
+        let state_vector = path_to_state_vector(hit, sequence.len(), di, domains.len(), hmm_length);
         let state_vector = rescue_missing_j_region(db, sequence, &state_vector, domains.len());
         let germline = assign_germline(&state_vector, sequence, &chain_type, allowed_species);
 
@@ -557,7 +558,10 @@ fn rescue_missing_j_region(
         return state_vector.to_vec();
     };
 
-    let rescue_state_vector = path_to_state_vector(rescue_hit, remaining.len(), 0, rescue_hits.len());
+    let (rescue_species, rescue_chain) = parse_hmm_name(&rescue_hit.hmm_name);
+    let rescue_hmm_length = germline::get_hmm_length(&rescue_species, &rescue_chain);
+    let rescue_state_vector =
+        path_to_state_vector(rescue_hit, remaining.len(), 0, rescue_hits.len(), rescue_hmm_length);
     let Some(first_rescue_state) = rescue_state_vector.first().map(|entry| entry.0 .0) else {
         return state_vector.to_vec();
     };

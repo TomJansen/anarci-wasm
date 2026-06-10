@@ -33,7 +33,7 @@ pub fn number_imgt(
     let n_regions = 7;
     let exclude_deletions: Vec<usize> = vec![1, 3, 5];
 
-    let (regions, startindex, endindex) = number_regions(
+    let (regions, startindex, endindex, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -43,6 +43,9 @@ pub fn number_imgt(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), startindex, endindex);
+    }
 
     // Build the renumbered output
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![

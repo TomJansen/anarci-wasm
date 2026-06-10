@@ -44,7 +44,7 @@ pub fn number_martin_heavy(
     let n_regions = 8;
     let exclude_deletions: Vec<usize> = vec![2, 4, 5, 6];
 
-    let (regions, start_index, end_index) = number_regions(
+    let (regions, start_index, end_index, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -54,6 +54,9 @@ pub fn number_martin_heavy(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), start_index, end_index);
+    }
 
     // Build numbering: regions 1, 3, 5, 7 pass through; 0, 2, 4, 6 are renumbered
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![
@@ -105,16 +108,16 @@ pub fn number_martin_heavy(
                 .map(|i| (annotations[i].clone(), regions[2][i].1))
                 .collect();
         } else {
-            // When no insertions, take positions from 23 up to fill, then 32, 33
-            let mut annotations: Vec<(i32, String)> = Vec::new();
-            for pos in 23..32 {
-                annotations.push((pos, " ".into()));
-            }
-            let front_take = if length >= 2 { length - 2 } else { 0 };
-            annotations.truncate(front_take);
-            let tail: Vec<(i32, String)> = vec![(32, " ".into()), (33, " ".into())];
-            let tail_take = length.min(2);
-            annotations.extend_from_slice(&tail[..tail_take]);
+            // No insertions. Mirror Python exactly (identical to Chothia heavy):
+            //   [(_," ") for _ in range(23,32)][:length-2] + [(32," "),(33," ")][:length]
+            // Python's `[:length-2]` is negative-index slicing for length < 2, so a
+            // length-1 CDRH1 keeps a leading 23.. position rather than collapsing to 32.
+            let base: Vec<(i32, String)> = (23..32).map(|p| (p, " ".into())).collect();
+            let base_count = chothia::py_slice_end(base.len(), length as isize - 2);
+            let mut annotations: Vec<(i32, String)> = base[..base_count].to_vec();
+            let tail = [(32, " ".to_string()), (33, " ".to_string())];
+            let tail_count = chothia::py_slice_end(tail.len(), length as isize);
+            annotations.extend_from_slice(&tail[..tail_count]);
             numbering[2] = (0..length)
                 .map(|i| (annotations[i].clone(), regions[2][i].1))
                 .collect();

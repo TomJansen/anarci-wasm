@@ -4,6 +4,14 @@
 use crate::alignment::*;
 use std::collections::HashMap;
 
+/// Number of elements yielded by Python's `lst[:end]` for a list of length `len`.
+/// A negative `end` counts back from the end (e.g. `[:-1]` == "all but last");
+/// the result is clamped to `[0, len]`.
+pub(super) fn py_slice_end(len: usize, end: isize) -> usize {
+    let resolved = if end < 0 { len as isize + end } else { end };
+    resolved.clamp(0, len as isize) as usize
+}
+
 /// Apply the Chothia numbering scheme for heavy chains.
 ///
 /// 8 regions are defined:
@@ -38,7 +46,7 @@ pub fn number_chothia_heavy(
     let n_regions = 8;
     let exclude_deletions: Vec<usize> = vec![0, 2, 4, 6];
 
-    let (regions, startindex, endindex) = number_regions(
+    let (regions, startindex, endindex, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -48,6 +56,9 @@ pub fn number_chothia_heavy(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), startindex, endindex);
+    }
 
     // Build renumbered output: regions 0, 2, 4, 6 are renumbered; 1, 3, 5, 7 pass through
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![
@@ -95,15 +106,17 @@ pub fn number_chothia_heavy(
         anns.push((33, " ".to_string()));
         anns
     } else {
-        // No insertions: take positions 23..32 truncated, then 32,33
-        let base_count = if length_r2 >= 2 { length_r2 - 2 } else { 0 };
-        let mut anns: Vec<(i32, String)> = (23..32)
-            .take(base_count)
-            .map(|p| (p, " ".to_string()))
-            .collect();
-        let tail: Vec<(i32, String)> = vec![(32, " ".to_string()), (33, " ".to_string())];
-        let tail_take = length_r2.min(tail.len() + anns.len()) - anns.len();
-        anns.extend_from_slice(&tail[..tail_take]);
+        // No insertions. Mirror Python exactly:
+        //   [(_," ") for _ in range(23,32)][:length-2] + [(32," "),(33," ")][:length]
+        // Python's `[:length-2]` uses negative-index slicing when length < 2:
+        // `[:-1]` means "all but the last", so a length-1 CDRH1 keeps the leading
+        // 23.. positions rather than collapsing to position 32.
+        let base: Vec<(i32, String)> = (23..32).map(|p| (p, " ".to_string())).collect();
+        let base_count = py_slice_end(base.len(), length_r2 as isize - 2);
+        let mut anns: Vec<(i32, String)> = base[..base_count].to_vec();
+        let tail = [(32, " ".to_string()), (33, " ".to_string())];
+        let tail_count = py_slice_end(tail.len(), length_r2 as isize);
+        anns.extend_from_slice(&tail[..tail_count]);
         anns
     };
     numbering[2] = (0..length_r2)
@@ -190,7 +203,7 @@ pub fn number_chothia_light(
     let n_regions = 7;
     let exclude_deletions: Vec<usize> = vec![1, 3, 4, 5];
 
-    let (regions, startindex, endindex) = number_regions(
+    let (regions, startindex, endindex, overflowed) = number_regions(
         sequence,
         state_vector,
         state_string,
@@ -200,6 +213,9 @@ pub fn number_chothia_light(
         n_regions,
         &exclude_deletions,
     );
+    if overflowed {
+        return (Vec::new(), startindex, endindex);
+    }
 
     let mut numbering: Vec<Vec<NumberedResidue>> = vec![
         regions[0].clone(), // FW1: pass through
@@ -307,4 +323,24 @@ pub fn number_chothia_light(
         .collect();
 
     (gap_missing(&numbering), startindex, endindex)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::py_slice_end;
+
+    #[test]
+    fn py_slice_end_matches_python_semantics() {
+        // Non-negative end: take first `end`, clamped to len.
+        assert_eq!(py_slice_end(9, 0), 0);
+        assert_eq!(py_slice_end(9, 5), 5);
+        assert_eq!(py_slice_end(9, 20), 9);
+        // Negative end: "all but last |end|", clamped to 0.
+        assert_eq!(py_slice_end(9, -1), 8); // Python [:-1] on len-9 -> 8
+        assert_eq!(py_slice_end(2, -1), 1); // tail [:length] not affected here
+        assert_eq!(py_slice_end(9, -20), 0);
+        // The length-1 CDRH1 case: base[:length-2] == base[:-1] keeps 8 items,
+        // so the first used annotation is position 23, not 32.
+        assert_eq!(py_slice_end(9, 1 - 2), 8);
+    }
 }
