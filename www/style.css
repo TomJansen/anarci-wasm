@@ -17,6 +17,10 @@ button:disabled { background: #94a3b8; cursor: not-allowed; }
 .secondary-btn:hover { background: #475569; }
 .toggle-active { background: #0f766e; }
 .toggle-active:hover { background: #115e59; }
+.toggles { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }
+.toggle-checkbox { display: flex; align-items: center; gap: 6px; font-size: 0.85em; color: #444; cursor: pointer; }
+.toggle-checkbox input { width: auto; padding: 0; margin: 0; cursor: pointer; }
+.toggle-hint { color: #888; font-size: 0.92em; }
 .input-area { display: flex; gap: 12px; margin-bottom: 16px; }
 textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em; padding: 12px; border: 1px solid #ccc; border-radius: 4px; resize: vertical; }
 .file-drop { border: 2px dashed #ccc; border-radius: 4px; padding: 20px; text-align: center; color: #888; cursor: pointer; min-width: 250px; display: flex; align-items: center; justify-content: center; }
@@ -47,6 +51,45 @@ textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em
 .duplicate-map-header h2 {
   font-size: 0.95em;
   margin: 0;
+  white-space: nowrap;
+}
+.summary-bar {
+  margin-top: 16px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px 16px;
+}
+.summary-bar.hidden { display: none; }
+.summary-headline { font-size: 1.05em; font-weight: 600; color: #1e293b; margin-bottom: 8px; }
+.summary-headline .summary-number { color: #0f766e; font-size: 1.25em; font-weight: 700; margin: 0 2px; }
+.summary-headline .summary-sub { font-weight: 400; color: #64748b; font-size: 0.85em; }
+.summary-bar .dup-stats { margin: 0; }
+.dup-stats {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.84em;
+  color: #475569;
+  margin: 0 14px;
+}
+.dup-stat strong { color: #1e293b; font-weight: 600; }
+.results-section-heading { font-size: 1em; margin: 18px 0 10px; color: #1e293b; }
+/* seq-result cards nested inside a collapsible panel body get top spacing. */
+.duplicate-map-body .seq-result { margin-top: 10px; }
+.dup-note { font-size: 0.82em; color: #64748b; margin-bottom: 8px; }
+.stop-codon-list { line-height: 1.9; }
+.stop-codon-chip {
+  display: inline-block;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-family: monospace;
+  font-size: 0.82em;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin: 1px 2px;
 }
 .duplicate-map-toggle {
   background: #e2e8f0;
@@ -121,6 +164,14 @@ textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em
 .domain-info { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 0.85em; color: #555; }
 .domain-info span { margin-right: 16px; }
 .domain-info .chain-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-weight: 600; font-size: 0.8em; }
+/* .ab1 read quality — separated from the ANARCI scores by a divider. */
+.domain-info .domain-quality {
+  margin-left: 6px;
+  padding-left: 16px;
+  border-left: 2px solid #cbd5e1;
+  color: #0f766e;
+  font-weight: 600;
+}
 .chain-H { background: #dbeafe; color: #1d4ed8; }
 .chain-L { background: #fce7f3; color: #be185d; }
 .chain-A, .chain-B, .chain-G, .chain-D { background: #d1fae5; color: #047857; }
@@ -172,3 +223,75 @@ textarea { width: 100%; height: 200px; font-family: monospace; font-size: 0.85em
 .hidden { display: none; }
 .loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* .ab1 chromatogram trace viewer */
+.trace-panel { margin: 8px 14px 14px; padding-top: 10px; border-top: 1px solid #f0f0f0; }
+/* Quieter, outlined toggle so the chromatogram is opt-in rather than shouting
+   for attention; picks up the app's teal accent on hover/open. */
+.trace-toggle {
+  background: #fff;
+  color: #0f766e;
+  border: 1px solid #99c7c1;
+  font-size: 0.8em;
+  font-weight: 600;
+  padding: 5px 12px;
+}
+.trace-toggle::before { content: '▸ '; font-size: 0.9em; }
+.trace-toggle:hover { background: #f0fdfa; border-color: #0f766e; }
+.trace-toggle[aria-expanded="true"] { background: #0f766e; color: #fff; border-color: #0f766e; }
+.trace-toggle[aria-expanded="true"]::before { content: '▾ '; }
+.trace-viewport { margin-top: 10px; }
+.trace-scroll { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 4px; background: #f8fafc; padding: 8px; }
+.trace-caption {
+  font-size: 0.78em;
+  color: #475569;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.trace-caption strong { color: #0f766e; }
+.trace-svg { display: block; }
+.trace-svg .trace-base { font-family: monospace; font-size: 11px; }
+.trace-svg .trace-aa { font-family: monospace; font-size: 12px; font-weight: 700; fill: #333; }
+/* Codon grouping: a small bracket ties the 3 bases to their amino acid. */
+.trace-svg .trace-codon-bracket { stroke: #94a3b8; stroke-width: 1; fill: none; }
+
+/* Flanking residues: translated context outside the numbered variable domain
+   (N-terminal up to the start codon, C-terminal up to the first stop). Drawn
+   faded so the antibody domain itself stays the focus. */
+.trace-svg .trace-aa.trace-flank { fill: #aab2bd; font-weight: 600; }
+.trace-svg .trace-codon-bracket.trace-flank { stroke: #d2d8df; }
+
+/* Stop / X read-through: only the X glyph is marked (red box, white text);
+   bases and chromatogram are left untouched. */
+.trace-svg .trace-aa-stopbox { fill: #dc2626; }
+.trace-svg text.trace-aa.trace-stop { fill: #fff !important; } /* white on red box */
+
+/* Stop read-through (X) in the numbering grid: boxed red glyph, matching the
+   trace view. Overrides any CDR background on the AA span. */
+.residue-cell.residue-stop .residue-aa {
+  background: #dc2626;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+/* The stop codon shown in place of the position number. */
+.residue-label.residue-codon {
+  color: #dc2626;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* Click-to-scroll link between numbering grid and trace */
+.residue-cell.trace-linked { cursor: pointer; }
+.residue-cell.trace-linked:hover { outline: 2px solid #0f766e; outline-offset: -2px; }
+
+/* Transient light-gray band marking the codon jumped to by a residue click. */
+.trace-svg .trace-flash-band {
+  fill: #9ca3af;
+  animation: traceFlash 1.5s ease-out forwards;
+}
+@keyframes traceFlash {
+  0%, 25% { opacity: 0.45; }
+  100%    { opacity: 0; }
+}

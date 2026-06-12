@@ -1,8 +1,16 @@
 import init, { number_sequences_with_options, available_schemes, available_species, compute_pim } from './pkg/anarci_wasm.js';
+import { parseAb1 } from './ab1.js';
+import { buildTracePanel } from './trace.js';
+
+// Trace data extracted from dropped .ab1 files, keyed by FASTA sequence id.
+window._ab1Traces = window._ab1Traces || new Map();
 
 let wasmReady = false;
-window._showUniqueOnly = false;
-window._duplicateMapCollapsed = false;
+window._showUniqueOnly = true;
+// Summary panels are collapsed by default.
+window._duplicateMapCollapsed = true;
+window._stopCodonMapCollapsed = true;
+window._noDomainMapCollapsed = true;
 const MAX_PARALLEL_WORKERS = 4;
 let workerPoolState = null;
 let activeRunToken = 0;
@@ -14,7 +22,6 @@ async function initWasm() {
     document.getElementById('status').textContent = '';
     document.getElementById('status').className = '';
     document.getElementById('runBtn').disabled = false;
-    document.getElementById('uniqueToggleBtn').disabled = false;
     wasmReady = true;
   } catch(e) {
     document.getElementById('status').textContent = 'Failed to load WASM: ' + e.message;
@@ -51,11 +58,36 @@ fileInput.addEventListener('change', e => { if (e.target.files.length) readFiles
 
 async function readFiles(fileList) {
   const files = Array.from(fileList);
-  const contents = await Promise.all(files.map(file => file.text()));
-  fastaInput.value = contents
-    .map(content => content.trim())
-    .filter(Boolean)
-    .join('\n\n');
+  const ab1Files = files.filter(f => /\.ab1$/i.test(f.name));
+  const textFiles = files.filter(f => !/\.ab1$/i.test(f.name));
+
+  const textRecords = await Promise.all(textFiles.map(f => f.text()));
+  const ab1Records = await Promise.all(ab1Files.map(readAb1File));
+
+  const fastaChunks = [
+    ...textRecords.map(c => c.trim()).filter(Boolean),
+    ...ab1Records.filter(Boolean).map(r => r.fasta),
+  ];
+  fastaInput.value = fastaChunks.join('\n\n');
+
+  // If any .ab1 was loaded, switch to DNA mode so base calls are translated.
+  if (ab1Records.some(Boolean)) {
+    document.getElementById('inputType').value = 'dna';
+  }
+}
+
+// Parse one .ab1 file: returns a FASTA record for its base calls and stashes
+// the chromatogram trace keyed by the sequence id (the file's base name).
+async function readAb1File(file) {
+  const buffer = await file.arrayBuffer();
+  const trace = parseAb1(buffer);
+  if (!trace) {
+    setStatus(`Could not parse ${escHtml(file.name)} as an .ab1 file.`, 'error');
+    return null;
+  }
+  const id = file.name.replace(/\.ab1$/i, '');
+  window._ab1Traces.set(id, trace);
+  return { fasta: `>${id}\n${trace.bases}` };
 }
 
 function splitFastaRecords(fastaText) {
@@ -266,7 +298,11 @@ async function numberSequencesInWorkers({
 document.getElementById('runBtn').addEventListener('click', runNumbering);
 document.getElementById('resetBtn').addEventListener('click', resetPage);
 document.getElementById('outputFormat').addEventListener('change', updateDownloadButton);
-document.getElementById('uniqueToggleBtn').addEventListener('click', toggleUniqueOnly);
+document.getElementById('uniqueOnly').addEventListener('change', toggleUniqueOnly);
+// Omitting stops affects the download only — no re-render needed, but refresh
+// the download button label/state to reflect the changed count.
+document.getElementById('omitStopsDownload').addEventListener('change', updateDownloadButton);
+document.getElementById('omitNoDomainDownload').addEventListener('change', updateDownloadButton);
 window.addEventListener('resize', () => {
   if (window._lastResults) rerenderResults();
 });
@@ -371,14 +407,24 @@ function resetPage() {
   document.getElementById('speciesFilter').value = '';
   document.getElementById('restrictFilter').value = '';
   document.getElementById('outputFormat').value = 'csv';
-  document.getElementById('results').innerHTML = '';
+  document.getElementById('correctResults').innerHTML = '';
+  document.getElementById('summaryBar').innerHTML = '';
+  document.getElementById('summaryBar').classList.add('hidden');
   document.getElementById('duplicateMap').innerHTML = '';
   document.getElementById('duplicateMap').classList.add('hidden');
+  document.getElementById('stopCodonMap').innerHTML = '';
+  document.getElementById('stopCodonMap').classList.add('hidden');
+  document.getElementById('noDomainMap').innerHTML = '';
+  document.getElementById('noDomainMap').classList.add('hidden');
   document.getElementById('downloadBtn').classList.add('hidden');
+  document.getElementById('omitStopsDownload').checked = true;
+  document.getElementById('omitNoDomainDownload').checked = true;
   window._lastResults = null;
   window._lastScheme = null;
-  window._showUniqueOnly = false;
-  window._duplicateMapCollapsed = false;
+  window._showUniqueOnly = true;
+  window._duplicateMapCollapsed = true;
+  window._stopCodonMapCollapsed = true;
+  window._noDomainMapCollapsed = true;
   updateUniqueToggleButton();
 
   if (wasmReady) {
@@ -454,6 +500,12 @@ function duplicateKeyForResult(res) {
   return (res.sequence || '').toUpperCase();
 }
 
+// A result contains an internal stop codon if any of its domains read one
+// through (as X). Only DNA/.ab1 inputs ever populate stop_positions.
+function resultHasInternalStop(res) {
+  return (res.domains || []).some(d => (d.stop_positions || []).length > 0);
+}
+
 function summarizeResults(results) {
   const seen = new Map();
   const uniqueResults = [];
@@ -476,7 +528,26 @@ function summarizeResults(results) {
     });
   });
 
-  return { uniqueResults, duplicateMappings };
+  const stopResults = results.filter(resultHasInternalStop);
+  const noDomainResults = results.filter(res => (res.domains || []).length === 0);
+
+  // "Correct" = has a domain and no internal stop codon. These are the cards
+  // shown in the Correct sequences section.
+  const correctResults = results.filter(
+    res => (res.domains || []).length > 0 && !resultHasInternalStop(res)
+  );
+  // "Usable" = correct AND unique — the deduplicated end set you take forward.
+  const uniqueSet = new Set(uniqueResults);
+  const usableResults = correctResults.filter(res => uniqueSet.has(res));
+
+  return {
+    uniqueResults,
+    duplicateMappings,
+    stopResults,
+    noDomainResults,
+    correctResults,
+    usableResults,
+  };
 }
 
 function groupDuplicateMappings(duplicateMappings) {
@@ -506,10 +577,23 @@ function getRenderedResults() {
   };
 }
 
+// Results to write to the downloaded file: the currently-shown set, minus
+// sequences with internal stop codons when that option is checked. This is a
+// download-only filter and does not affect what is rendered on the page.
+function getResultsForDownload() {
+  const { results } = getRenderedResults();
+  const omitStops = document.getElementById('omitStopsDownload').checked;
+  const omitNoDomain = document.getElementById('omitNoDomainDownload').checked;
+  return results.filter(res =>
+    (!omitStops || !resultHasInternalStop(res)) &&
+    (!omitNoDomain || (res.domains || []).length > 0)
+  );
+}
+
 function updateUniqueToggleButton() {
-  const btn = document.getElementById('uniqueToggleBtn');
-  btn.textContent = window._showUniqueOnly ? 'Show all sequences' : 'Show unique only';
-  btn.classList.toggle('toggle-active', window._showUniqueOnly);
+  // Keep the checkbox in sync with state (e.g. after a reset).
+  const box = document.getElementById('uniqueOnly');
+  if (box) box.checked = window._showUniqueOnly;
 }
 
 function updateDuplicateMapToggle(container) {
@@ -523,27 +607,63 @@ function updateDuplicateMapToggle(container) {
 }
 
 function toggleUniqueOnly() {
+  window._showUniqueOnly = document.getElementById('uniqueOnly').checked;
   if (!window._lastResults) return;
-  window._showUniqueOnly = !window._showUniqueOnly;
   rerenderResults();
+}
+
+// Top-of-results summary. Leads with the count that actually matters — the
+// usable set (correct + unique) — then a logical breakdown of where the rest
+// of the input went.
+function renderSummaryBar(summary) {
+  const container = document.getElementById('summaryBar');
+  const total = (window._lastResults || []).length;
+  if (total === 0) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+
+  const usable = summary.usableResults.length;
+  const correct = summary.correctResults.length;
+  const unique = summary.uniqueResults.length;
+  const duplicate = summary.duplicateMappings.length;
+  const stop = summary.stopResults.length;
+  const noDomain = summary.noDomainResults.length;
+
+  const breakdown = [
+    ['Total input', total],
+    ['Correct', correct],
+    ['Unique', unique],
+    ['Duplicates', duplicate],
+    ['With stop codon', stop],
+    ['No domain', noDomain],
+  ]
+    .map(([label, value]) => `<span class="dup-stat"><strong>${label}:</strong> ${value}</span>`)
+    .join('');
+
+  container.innerHTML = `
+    <div class="summary-headline">
+      Usable sequences <span class="summary-sub">(correct &amp; unique)</span>:
+      <span class="summary-number">${usable}</span>
+      <span class="summary-sub">of ${total}</span>
+    </div>
+    <div class="dup-stats">${breakdown}</div>
+  `;
+  container.classList.remove('hidden');
 }
 
 function renderDuplicateMap(summary) {
   const container = document.getElementById('duplicateMap');
   const { uniqueResults, duplicateMappings } = summary;
 
-  if (!window._lastResults || duplicateMappings.length === 0) {
+  if (!window._lastResults || window._lastResults.length === 0) {
     container.innerHTML = '';
     container.classList.add('hidden');
     return;
   }
 
-  const anyDna = (window._lastResults || []).some(res => res.input_type === 'dna');
   const duplicateCount = duplicateMappings.length;
-  const totalCount = window._lastResults.length;
-  const intro = window._showUniqueOnly
-    ? `Showing ${uniqueResults.length} unique ${pluralize(uniqueResults.length, 'sequence')} out of ${totalCount} total input ${pluralize(totalCount, 'sequence')}, with ${duplicateCount} duplicate ${pluralize(duplicateCount, 'sequence')} grouped under those unique entries.`
-    : `Found ${uniqueResults.length} unique ${pluralize(uniqueResults.length, 'sequence')} and ${duplicateCount} duplicate ${pluralize(duplicateCount, 'sequence')} across ${totalCount} total input ${pluralize(totalCount, 'sequence')}.`;
   const groups = groupDuplicateMappings(duplicateMappings);
 
   const rows = groups
@@ -583,15 +703,16 @@ function renderDuplicateMap(summary) {
     })
     .join('');
 
+  const collapsed = window._duplicateMapCollapsed;
   container.innerHTML = `
     <div class="duplicate-map-header" role="button" tabindex="0" aria-controls="duplicateMapBody">
       <h2>Duplicate Sequence Map</h2>
-      <button type="button" class="duplicate-map-toggle" aria-expanded="true">Collapse</button>
+      <button type="button" class="duplicate-map-toggle" aria-expanded="${!collapsed}">${collapsed ? 'Expand' : 'Collapse'}</button>
     </div>
-    <div id="duplicateMapBody" class="duplicate-map-body">
-      <p>${escHtml(intro)}</p>
-      ${anyDna ? '<p>For DNA inputs, duplicate grouping is based on the detected numbered domain amino-acid sequence or sequences, not the raw DNA string.</p>' : ''}
-      <table class="duplicate-map-table">
+    <div id="duplicateMapBody" class="duplicate-map-body${collapsed ? ' hidden' : ''}">
+      ${duplicateMappings.length === 0
+        ? '<p class="dup-note">No duplicate sequences.</p>'
+        : `<table class="duplicate-map-table">
         <thead>
           <tr>
             <th>Unique</th>
@@ -600,7 +721,7 @@ function renderDuplicateMap(summary) {
           </tr>
         </thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table>`}
     </div>
   `;
   container.classList.remove('hidden');
@@ -644,27 +765,138 @@ function renderDuplicateMap(summary) {
 
 function rerenderResults() {
   if (!window._lastResults) {
-    document.getElementById('results').innerHTML = '';
+    document.getElementById('correctResults').innerHTML = '';
+    document.getElementById('summaryBar').innerHTML = '';
+    document.getElementById('summaryBar').classList.add('hidden');
     document.getElementById('duplicateMap').innerHTML = '';
     document.getElementById('duplicateMap').classList.add('hidden');
+    document.getElementById('stopCodonMap').innerHTML = '';
+    document.getElementById('stopCodonMap').classList.add('hidden');
+    document.getElementById('noDomainMap').innerHTML = '';
+    document.getElementById('noDomainMap').classList.add('hidden');
     updateUniqueToggleButton();
     updateDownloadButton();
     return;
   }
 
   const scheme = window._lastScheme || document.getElementById('scheme').value;
-  const { results, summary } = getRenderedResults();
+  const summary = summarizeResults(window._lastResults);
+
+  renderSummaryBar(summary);
   renderDuplicateMap(summary);
-  renderResults(results, scheme);
+  renderStopCodonMap(summary, scheme);
+  renderNoDomainMap(summary, scheme);
+  renderResults(applyUniqueFilter(summary.correctResults, summary), scheme);
   updateUniqueToggleButton();
   updateDownloadButton();
 }
 
+// Generic collapsible panel that renders full seq-result cards. Used for the
+// stop-codon and no-domain sections. `collapseKey` is the window state flag.
+function renderCardPanel({ containerId, title, note, results, scheme, collapseKey }) {
+  const container = document.getElementById(containerId);
+  if (results.length === 0) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+
+  const collapsed = window[collapseKey];
+  container.innerHTML = `
+    <div class="duplicate-map-header" role="button" tabindex="0">
+      <h2>${escHtml(title)} (${results.length})</h2>
+      <button type="button" class="duplicate-map-toggle" aria-expanded="${!collapsed}">${collapsed ? 'Expand' : 'Collapse'}</button>
+    </div>
+    <div class="duplicate-map-body${collapsed ? ' hidden' : ''}">
+      ${note ? `<p class="dup-note">${escHtml(note)}</p>` : ''}
+    </div>
+  `;
+
+  const body = container.querySelector('.duplicate-map-body');
+  for (const res of results) {
+    body.appendChild(buildSeqResultCard(res, scheme));
+  }
+  container.classList.remove('hidden');
+
+  const header = container.querySelector('.duplicate-map-header');
+  const toggle = container.querySelector('.duplicate-map-toggle');
+  const toggleMap = () => {
+    window[collapseKey] = !window[collapseKey];
+    body.classList.toggle('hidden', window[collapseKey]);
+    toggle.setAttribute('aria-expanded', String(!window[collapseKey]));
+    toggle.textContent = window[collapseKey] ? 'Expand' : 'Collapse';
+  };
+  header.addEventListener('click', event => {
+    if (event.target.closest('.duplicate-map-toggle')) return;
+    toggleMap();
+  });
+  header.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleMap();
+    }
+  });
+  toggle.addEventListener('click', event => {
+    event.stopPropagation();
+    toggleMap();
+  });
+}
+
+// Restrict a result list to the deduplicated set when "show unique only" is on.
+function applyUniqueFilter(results, summary) {
+  if (!window._showUniqueOnly) return results;
+  const uniqueSet = new Set(summary.uniqueResults);
+  return results.filter(res => uniqueSet.has(res));
+}
+
+function renderStopCodonMap(summary, scheme) {
+  renderCardPanel({
+    containerId: 'stopCodonMap',
+    title: 'Sequences with internal stop codons',
+    note: 'These are excluded from the download when "Omit sequences with internal stop codons" is checked. Each card shows the stop codon (e.g. TGA) at its numbered position.',
+    results: applyUniqueFilter(summary.stopResults || [], summary),
+    scheme,
+    collapseKey: '_stopCodonMapCollapsed',
+  });
+}
+
+function renderNoDomainMap(summary, scheme) {
+  renderCardPanel({
+    containerId: 'noDomainMap',
+    title: 'No domain found',
+    note: 'No antibody/receptor domain was detected in these sequences.',
+    results: applyUniqueFilter(summary.noDomainResults || [], summary),
+    scheme,
+    collapseKey: '_noDomainMapCollapsed',
+  });
+}
+
+// Render the "Correct sequences" section: a labelled heading plus a card for
+// each correct (has-domain, stop-free) result, honouring the unique-only toggle.
 function renderResults(results, scheme) {
-  const container = document.getElementById('results');
+  const container = document.getElementById('correctResults');
   container.innerHTML = '';
 
+  const heading = document.createElement('h2');
+  heading.className = 'results-section-heading';
+  heading.textContent = `Correct sequences (${results.length})`;
+  container.appendChild(heading);
+
+  if (results.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'dup-note';
+    empty.textContent = 'No correct sequences.';
+    container.appendChild(empty);
+    return;
+  }
+
   for (const res of results) {
+    container.appendChild(buildSeqResultCard(res, scheme));
+  }
+}
+
+// Build one collapsible seq-result card (header + domains + optional trace).
+function buildSeqResultCard(res, scheme) {
     const div = document.createElement('div');
     div.className = 'seq-result';
 
@@ -675,11 +907,16 @@ function renderResults(results, scheme) {
 
     const body = document.createElement('div');
 
+    const domTrace = window._ab1Traces.get(res.id);
+
     for (const dom of res.domains) {
-      // Domain info bar
+      // Domain info bar — ANARCI scores, then (separated) the .ab1 read quality.
       const info = document.createElement('div');
       info.className = 'domain-info';
       const badge = `chain-${dom.chain_class}`;
+      // Phred quality summary over the domain's base calls, when this came from
+      // an .ab1 with a quality track. Shown apart from the ANARCI scores.
+      const qstats = dom === res.domains[0] ? domainQualityStats(dom, domTrace) : null;
       info.innerHTML = `
         <span class="chain-badge ${badge}">${dom.chain_type}</span>
         <span>Species: ${dom.species}</span>
@@ -688,6 +925,7 @@ function renderResults(results, scheme) {
         <span>${dom.translation_frame ? 'AA region' : 'Region'}: ${dom.seq_start+1}-${dom.seq_end}</span>
         ${dom.translation_frame ? `<span>Frame: ${dom.translation_frame}</span>` : ''}
         ${dom.nt_start != null && dom.nt_end != null ? `<span>NT region: ${dom.nt_start + 1}-${dom.nt_end}</span>` : ''}
+        ${qstats != null ? `<span class="domain-quality" title="Phred quality over this domain, averaged in error-probability space (the standard 'mean quality'). Q20% = fraction of bases at ≤1% error.">Quality: <strong>Q${qstats.meanQ}</strong> &middot; ${qstats.q20Pct}% &ge;Q20</span>` : ''}
       `;
       body.appendChild(info);
 
@@ -699,21 +937,55 @@ function renderResults(results, scheme) {
       const grid = document.createElement('div');
       grid.className = 'numbering-grid';
 
-      for (const e of residues) {
+      // The k-th non-gap residue maps to the k-th codon in the trace, but only
+      // for the best-scoring (first) domain, which is what the trace renders.
+      const traceLinked = window._ab1Traces.has(res.id) && dom === res.domains[0];
+
+      residues.forEach((e, k) => {
         const cell = document.createElement('div');
         const cdr = cdrClassForPosition(e.position, scheme, dom.chain_class);
         const cdrClass = cdr ? ` ${cdr}` : '';
         const gap = e.amino_acid === '-' ? ' gap' : '';
-        cell.className = `residue-cell${cdrClass}${gap}`;
+        // Stop read-throughs (X) get the boxed-red treatment, matching the trace.
+        const isStop = e.amino_acid === 'X';
+        const stop = isStop ? ' residue-stop' : '';
+        const linkClass = traceLinked ? ' trace-linked' : '';
+        cell.className = `residue-cell${cdrClass}${gap}${stop}${linkClass}`;
+        if (traceLinked) cell.dataset.codon = String(k);
+
+        // For a stop, show the actual codon (TGA/TAA/TAG) in place of the
+        // position number, so the user sees which stop it is. Only the
+        // best-scoring domain maps cleanly onto the trace's codons.
+        const codon = isStop && dom === res.domains[0]
+          ? codonNucleotides(dom, domTrace, k)
+          : null;
+        const label = codon
+          ? `<span class="residue-label residue-codon" title="Stop codon at position ${escHtml(`${e.position}${e.insertion.trim() || ''}`)}">${escHtml(codon)}</span>`
+          : `<span class="residue-label">${escHtml(`${e.position}${e.insertion.trim() || ''}`)}</span>`;
         cell.innerHTML = `
           <span class="residue-aa">${escHtml(e.amino_acid)}</span>
-          <span class="residue-label">${escHtml(`${e.position}${e.insertion.trim() || ''}`)}</span>
+          ${label}
         `;
         grid.appendChild(cell);
-      }
+      });
 
       tableDiv.appendChild(grid);
       body.appendChild(tableDiv);
+    }
+
+    // Chromatogram trace panel, if this sequence came from an .ab1 file.
+    const trace = window._ab1Traces.get(res.id);
+    if (trace) {
+      const panel = buildTracePanel(trace, res, escHtml);
+      body.appendChild(panel);
+      // Clicking a residue cell of the best-scoring domain scrolls the trace to
+      // that codon. Delegated so it survives the grid being (re)built.
+      body.addEventListener('click', event => {
+        const cell = event.target.closest('.residue-cell.trace-linked');
+        if (!cell || !body.contains(cell)) return;
+        const k = Number(cell.dataset.codon);
+        if (Number.isInteger(k)) panel.scrollToCodon(k);
+      });
     }
 
     // Toggle collapse
@@ -725,12 +997,68 @@ function renderResults(results, scheme) {
 
     div.appendChild(header);
     div.appendChild(body);
-    container.appendChild(div);
-  }
+    return div;
 }
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Phred quality summary over the base calls spanned by a domain, or null if
+// there is no trace / quality track / nt mapping. Quality is indexed like the
+// forward base-call string; a reverse-strand frame maps its nt span onto
+// mirrored indices (same convention as the trace renderer).
+//
+// Phred is a log scale (Q = -10 log10 P_error), so a plain arithmetic mean of
+// Q-values overweights the good bases and understates the real error rate. We
+// instead average in *probability* space — mean error probability, converted
+// back to Q — which is the standard way QC tools report an "average quality".
+// We also return the Q20 fraction (bases at <=1% error), the other headline
+// QC metric (FastQC/Illumina style).
+function domainQualityStats(dom, trace) {
+  if (!trace || !trace.quality || trace.quality.length === 0) return null;
+  if (dom.nt_start == null || dom.nt_end == null) return null;
+  const n = trace.quality.length;
+  const isReverse = (dom.translation_frame || '').startsWith('-');
+  let errSum = 0;
+  let count = 0;
+  let q20 = 0;
+  for (let nt = dom.nt_start; nt < dom.nt_end; nt++) {
+    const idx = isReverse ? n - 1 - nt : nt;
+    if (idx >= 0 && idx < n) {
+      const q = trace.quality[idx];
+      errSum += Math.pow(10, -q / 10);
+      if (q >= 20) q20++;
+      count++;
+    }
+  }
+  if (!count) return null;
+  const meanErr = errSum / count;
+  // Mean error of 0 (all extremely high Q) → clamp to a sane ceiling.
+  const meanQ = meanErr > 0 ? Math.round(-10 * Math.log10(meanErr)) : 60;
+  return { meanQ, q20Pct: Math.round((q20 / count) * 100) };
+}
+
+const COMPLEMENT = { A: 'T', T: 'A', G: 'C', C: 'G', U: 'A', N: 'N' };
+
+// The coding-strand nucleotide triplet for the k-th codon of a domain, so a
+// stop reads as TGA/TAA/TAG. Returns null without a trace / nt mapping. For a
+// reverse-strand frame the codon's bases are mirrored on the displayed trace,
+// so we read them right-to-left and complement to recover the coding triplet.
+function codonNucleotides(dom, trace, k) {
+  if (!trace || !trace.bases || dom.nt_start == null) return null;
+  const bases = trace.bases;
+  const n = bases.length;
+  const isReverse = (dom.translation_frame || '').startsWith('-');
+  const codonStartNt = dom.nt_start + k * 3;
+  let out = '';
+  for (let b = 0; b < 3; b++) {
+    const idx = isReverse ? n - 1 - (codonStartNt + b) : codonStartNt + b;
+    if (idx < 0 || idx >= n) return null;
+    const base = bases[idx];
+    out += isReverse ? COMPLEMENT[base] || 'N' : base;
+  }
+  return out;
 }
 
 function csvEscape(value) {
@@ -742,7 +1070,7 @@ function csvEscape(value) {
 }
 
 function positionKey(position, insertion) {
-  return `${position} ${insertion}`;
+  return `${position}|${insertion}`;
 }
 
 function positionLabel(position, insertion) {
@@ -878,6 +1206,73 @@ function buildAnarciText(results) {
   return lines.join('\n') + '\n';
 }
 
+// Wrap a sequence to fixed-width lines for FASTA output.
+function fastaWrap(seq, width = 60) {
+  const lines = [];
+  for (let i = 0; i < seq.length; i += width) {
+    lines.push(seq.slice(i, i + width));
+  }
+  return lines.join('\n');
+}
+
+// The FASTA header label for one domain. Suffixes the chain type, and the
+// domain index when a sequence has more than one domain, to keep ids unique.
+function fastaDomainLabel(res, dom, index, domainCount) {
+  const suffix = domainCount > 1 ? `_d${index + 1}` : '';
+  const chain = dom.chain_type ? `_${dom.chain_type}` : '';
+  return `${res.id}${chain}${suffix}`;
+}
+
+// One FASTA record per domain, using the numbered amino-acid sequence (the
+// non-gap residues, including any X stop read-throughs). Works for both protein
+// and DNA inputs since both populate domain.numbering.
+function buildFastaAminoAcids(results) {
+  const records = [];
+  for (const res of results) {
+    const domains = res.domains || [];
+    for (const [index, dom] of domains.entries()) {
+      const seq = domainResidueSequence(dom);
+      if (!seq) continue;
+      records.push(`>${fastaDomainLabel(res, dom, index, domains.length)}\n${fastaWrap(seq)}`);
+    }
+  }
+  return records.join('\n') + (records.length ? '\n' : '');
+}
+
+// The coding-strand nucleotide span for a domain, recovered from the input DNA.
+// For a reverse-strand frame the span is read right-to-left and complemented,
+// matching the convention used by the trace / codon helpers.
+function domainCodingDna(res, dom) {
+  if (dom.nt_start == null || dom.nt_end == null) return '';
+  const dna = (res.sequence || '').toUpperCase();
+  const n = dna.length;
+  const isReverse = (dom.translation_frame || '').startsWith('-');
+  let out = '';
+  for (let nt = dom.nt_start; nt < dom.nt_end; nt++) {
+    const idx = isReverse ? n - 1 - nt : nt;
+    if (idx < 0 || idx >= n) continue;
+    const base = dna[idx];
+    out += isReverse ? COMPLEMENT[base] || 'N' : base;
+  }
+  return out;
+}
+
+// One FASTA record per domain, using the coding DNA span. Only DNA inputs carry
+// nucleotide coordinates; protein-input domains have no DNA and are skipped.
+function buildFastaDna(results) {
+  const records = [];
+  for (const res of results) {
+    if (res.input_type !== 'dna') continue;
+    const domains = res.domains || [];
+    for (const [index, dom] of domains.entries()) {
+      const seq = domainCodingDna(res, dom);
+      if (!seq) continue;
+      records.push(`>${fastaDomainLabel(res, dom, index, domains.length)}\n${fastaWrap(seq)}`);
+    }
+  }
+  return records.join('\n') + (records.length ? '\n' : '');
+}
+
 function updateDownloadButton() {
   const btn = document.getElementById('downloadBtn');
   if (!window._lastResults) {
@@ -887,13 +1282,33 @@ function updateDownloadButton() {
 
   const outputFormat = document.getElementById('outputFormat').value;
   btn.classList.remove('hidden');
-  if (outputFormat === 'anarci') {
-    btn.textContent = 'Download ANARCI text';
-  } else if (outputFormat.startsWith('pim-')) {
-    btn.textContent = 'Download PIM';
+  const base =
+    outputFormat === 'anarci'
+      ? 'Download ANARCI text'
+      : outputFormat === 'fasta-aa'
+      ? 'Download FASTA (AA)'
+      : outputFormat === 'fasta-dna'
+      ? 'Download FASTA (DNA)'
+      : outputFormat.startsWith('pim-')
+      ? 'Download PIM'
+      : 'Download CSV';
+
+  // Show how much the download will contain, so the omit filters' effect is
+  // visible before clicking. FASTA exports emit one record per domain (DNA only
+  // for the nucleotide variant); other formats emit one row per sequence.
+  const results = getResultsForDownload();
+  let count;
+  if (outputFormat === 'fasta-aa') {
+    count = results.reduce((n, res) => n + (res.domains || []).length, 0);
+  } else if (outputFormat === 'fasta-dna') {
+    count = results.reduce(
+      (n, res) => n + (res.input_type === 'dna' ? (res.domains || []).length : 0),
+      0
+    );
   } else {
-    btn.textContent = 'Download CSV';
+    count = results.length;
   }
+  btn.textContent = `${base} (${count})`;
 }
 
 function hierarchicalClusterOrder(n, distFn) {
@@ -1036,7 +1451,7 @@ function buildPimCsv(results, scope, scheme) {
 document.getElementById('downloadBtn').addEventListener('click', () => {
   if (!window._lastResults) return;
   const scheme = window._lastScheme || document.getElementById('scheme').value;
-  const { results } = getRenderedResults();
+  const results = getResultsForDownload();
   const outputFormat = document.getElementById('outputFormat').value;
 
   let text, mimeType, filename;
@@ -1044,6 +1459,14 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
     text = buildAnarciText(results);
     mimeType = 'text/plain';
     filename = `anarci_${scheme}.anarci`;
+  } else if (outputFormat === 'fasta-aa') {
+    text = buildFastaAminoAcids(results);
+    mimeType = 'text/plain';
+    filename = `anarci_${scheme}_aa.fasta`;
+  } else if (outputFormat === 'fasta-dna') {
+    text = buildFastaDna(results);
+    mimeType = 'text/plain';
+    filename = `anarci_${scheme}_dna.fasta`;
   } else if (outputFormat.startsWith('pim-')) {
     const scope = outputFormat.slice(4);
     text = compute_pim(JSON.stringify(results), scope, scheme);

@@ -55,6 +55,18 @@ pub struct DomainResult {
     pub translation_frame: String,
     pub nt_start: Option<usize>,
     pub nt_end: Option<usize>,
+    /// Sequence indices (into the translated peptide) of stop codons read
+    /// through as `X` that fall within this domain's span. Empty for protein
+    /// input or stop-free domains.
+    pub stop_positions: Vec<usize>,
+    /// Translated residues of the best frame that fall *before* `seq_start`
+    /// (N-terminal / front flank) and *after* `seq_end` (C-terminal / back
+    /// flank). These lie outside the numbered variable domain; the trace viewer
+    /// renders them in a lighter color so the read context is visible. Empty for
+    /// protein input. Translated by the single Rust codon table, like the domain
+    /// itself, so the UI never needs its own genetic code.
+    pub flank_before: String,
+    pub flank_after: String,
     pub numbering: Vec<NumberingEntry>,
 }
 
@@ -337,6 +349,55 @@ fn number_domains_from_hits(
             let seq_start = start.unwrap_or(hit.seq_start);
             let seq_end = end.map(|value| value + 1).unwrap_or(hit.seq_end);
 
+            // Flanking residues of the best frame, outside the numbered domain.
+            // Reuses the one Rust translation so the UI never re-translates.
+            //
+            // Front flank: from the start codon (the nearest upstream `M`) up to
+            // the domain, falling back to the read start if there is no upstream
+            // Met. Back flank: from the domain end up to the first true stop
+            // codon, falling back to the read end. Internal stops *within* a
+            // flank are ignored (rendered as residues) — only a true stop bounds
+            // the back flank, matching how read-through `X` is handled elsewhere.
+            let (flank_before, flank_after) = translation
+                .map(|frame| {
+                    let chars: Vec<char> = frame.sequence.chars().collect();
+                    let lo = seq_start.min(chars.len());
+                    let hi = seq_end.min(chars.len());
+
+                    // Nearest start codon (M) at or before the domain start.
+                    let before_start = chars[..lo]
+                        .iter()
+                        .rposition(|&c| c == 'M')
+                        .unwrap_or(0);
+                    let before: String = chars[before_start..lo].iter().collect();
+
+                    // First true stop at or after the domain end bounds the back
+                    // flank; ambiguous `X` (not in stop_positions) does not.
+                    let after_stop = frame
+                        .stop_positions
+                        .iter()
+                        .copied()
+                        .filter(|&p| p >= hi)
+                        .min()
+                        .unwrap_or(chars.len());
+                    let after: String = chars[hi..after_stop].iter().collect();
+
+                    (before, after)
+                })
+                .unwrap_or_default();
+
+            // Stops (read through as `X`) that fall inside this domain's span.
+            let stop_positions: Vec<usize> = translation
+                .map(|frame| {
+                    frame
+                        .stop_positions
+                        .iter()
+                        .copied()
+                        .filter(|&p| p >= seq_start && p < seq_end)
+                        .collect()
+                })
+                .unwrap_or_default();
+
             domain_results.push(DomainResult {
                 domain_index: di,
                 species: species.clone(),
@@ -365,6 +426,9 @@ fn number_domains_from_hits(
                 translation_frame,
                 nt_start,
                 nt_end,
+                stop_positions,
+                flank_before,
+                flank_after,
                 numbering: entries,
             });
         }

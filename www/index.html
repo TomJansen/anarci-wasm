@@ -60,6 +60,8 @@
       <select id="outputFormat" title="Choose which format to download">
         <option value="csv" selected>CSV</option>
         <option value="anarci">ANARCI text</option>
+        <option value="fasta-aa">Multiple FASTA (Amino acids)</option>
+        <option value="fasta-dna">Multiple FASTA (DNA)</option>
         <option disabled>──────────</option>
         <option value="pim-full">PIM – Full sequence</option>
         <option value="pim-cdr1">PIM – CDR1</option>
@@ -69,25 +71,39 @@
       </select>
     </div>
     <button id="runBtn" disabled>Number sequences</button>
-    <button id="uniqueToggleBtn" type="button" class="secondary-btn" disabled>Show unique only</button>
     <button id="downloadBtn" class="download-btn hidden">Download CSV</button>
     <button id="resetBtn" type="button" class="secondary-btn">Reset</button>
+  </div>
+
+  <div class="toggles">
+    <label class="toggle-checkbox">
+      <input type="checkbox" id="uniqueOnly" checked> Show unique only
+    </label>
+    <label class="toggle-checkbox" title="Sequences with an internal stop codon are excluded from the downloaded file only; they still appear in the results below.">
+      <input type="checkbox" id="omitStopsDownload" checked> Omit sequences with internal stop codons <span class="toggle-hint">(download only)</span>
+    </label>
+    <label class="toggle-checkbox" title="Sequences with no detected domain are excluded from the downloaded file only; they still appear in the results below.">
+      <input type="checkbox" id="omitNoDomainDownload" checked> Omit sequences with no domains <span class="toggle-hint">(download only)</span>
+    </label>
   </div>
 
   <div class="input-area">
     <textarea id="fastaInput" placeholder=">sequence_1&#10;EVQLVESGGGLVQPGGSLRLSCAASGFNIKDTYIHWVRQAPGKGLEWVARIYPTNGYTRYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCSRWGGDGFYAMDYWGQGTLVTVSS&#10;&#10;Paste protein or DNA FASTA here, or drag files..."></textarea>
     <div class="file-drop" id="fileDrop">
       <div>
-        <p>Drop protein or DNA FASTA files here</p>
+        <p>Drop protein or DNA FASTA files, or .ab1 trace files, here</p>
         <p style="font-size:0.8em; margin-top:4px">or click to browse multiple files</p>
-        <input type="file" id="fileInput" accept=".fasta,.fa,.faa,.fna,.txt" multiple>
+        <input type="file" id="fileInput" accept=".fasta,.fa,.faa,.fna,.txt,.ab1" multiple>
       </div>
     </div>
   </div>
 
   <div id="status">Loading WASM module...</div>
+  <div id="summaryBar" class="summary-bar hidden"></div>
   <div id="duplicateMap" class="duplicate-map hidden"></div>
-  <div id="results" class="results"></div>
+  <div id="stopCodonMap" class="duplicate-map hidden"></div>
+  <div id="noDomainMap" class="duplicate-map hidden"></div>
+  <div id="correctResults" class="results"></div>
   <div class="credits">
     This WebAssembly version of ANARCI is written in Rust, and is based on
     <a href="https://github.com/oxpig/ANARCI" target="_blank" rel="noopener noreferrer">ANARCI</a>
