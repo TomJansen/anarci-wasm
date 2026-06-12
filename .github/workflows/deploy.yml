@@ -48,6 +48,8 @@ jobs:
           cp www/index.html _site/
           cp www/style.css _site/
           cp www/app.js _site/
+          cp www/ab1.js _site/
+          cp www/trace.js _site/
           cp www/worker.js _site/
           mkdir -p _site/pkg
           cp -r pkg/. _site/pkg/
