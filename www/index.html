@@ -72,12 +72,16 @@
     </div>
     <button id="runBtn" disabled>Number sequences</button>
     <button id="downloadBtn" class="download-btn hidden">Download CSV</button>
+    <button id="downloadStopsBtn" class="download-stops-btn hidden" title="Download the coding-DNA FASTA of only the sequences that have an internal stop codon, with each in-frame amber (TAG) codon rewritten to CAG (Gln), so they can be re-ordered/re-synthesized.">Download Fixed Stop codon DNA</button>
     <button id="resetBtn" type="button" class="secondary-btn">Reset</button>
   </div>
 
   <div class="toggles">
     <label class="toggle-checkbox">
       <input type="checkbox" id="uniqueOnly" checked> Show unique only
+    </label>
+    <label class="toggle-checkbox" title="Treat an internal TAG (amber) read-through (shown as X) as a Q when deciding whether two sequences are duplicates — amber is the stop that suppressor strains read through as Gln. TAA/TGA stay real stops. The version without the stop codon is kept as the unique representative.">
+      <input type="checkbox" id="readthroughAsQ"> Count TAG (amber) read-through as Q for duplicates
     </label>
     <label class="toggle-checkbox" title="Sequences with an internal stop codon are excluded from the downloaded file only; they still appear in the results below.">
       <input type="checkbox" id="omitStopsDownload" checked> Omit sequences with internal stop codons <span class="toggle-hint">(download only)</span>

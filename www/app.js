@@ -7,6 +7,14 @@ window._ab1Traces = window._ab1Traces || new Map();
 
 let wasmReady = false;
 window._showUniqueOnly = true;
+// Treat an internal stop-codon read-through (X) as a Q when deduplicating.
+window._readthroughAsQ = false;
+// When deduplicating DNA inputs, break ties within a duplicate group by E. coli
+// codon optimization, keeping the best-scoring member as the canonical sequence.
+// Not exposed in the UI. Set to false to fall back to first-seen ordering.
+// Metric is one of 'cai' (default), 'freq', or 'rare' — see CODON_OPT_METRICS.
+window._codonOptDedup = true;
+window._codonOptMetric = 'cai';
 // Summary panels are collapsed by default.
 window._duplicateMapCollapsed = true;
 window._stopCodonMapCollapsed = true;
@@ -299,6 +307,7 @@ document.getElementById('runBtn').addEventListener('click', runNumbering);
 document.getElementById('resetBtn').addEventListener('click', resetPage);
 document.getElementById('outputFormat').addEventListener('change', updateDownloadButton);
 document.getElementById('uniqueOnly').addEventListener('change', toggleUniqueOnly);
+document.getElementById('readthroughAsQ').addEventListener('change', toggleReadthroughAsQ);
 // Omitting stops affects the download only — no re-render needed, but refresh
 // the download button label/state to reflect the changed count.
 document.getElementById('omitStopsDownload').addEventListener('change', updateDownloadButton);
@@ -417,11 +426,14 @@ function resetPage() {
   document.getElementById('noDomainMap').innerHTML = '';
   document.getElementById('noDomainMap').classList.add('hidden');
   document.getElementById('downloadBtn').classList.add('hidden');
+  document.getElementById('downloadStopsBtn').classList.add('hidden');
   document.getElementById('omitStopsDownload').checked = true;
   document.getElementById('omitNoDomainDownload').checked = true;
+  document.getElementById('readthroughAsQ').checked = false;
   window._lastResults = null;
   window._lastScheme = null;
   window._showUniqueOnly = true;
+  window._readthroughAsQ = false;
   window._duplicateMapCollapsed = true;
   window._stopCodonMapCollapsed = true;
   window._noDomainMapCollapsed = true;
@@ -489,10 +501,38 @@ function domainResidueSequence(domain) {
     .join('');
 }
 
+// The domain's residue sequence, but with TAG (amber) read-throughs rewritten
+// from X to Q. Only TAG is treated this way — amber is the codon that suppressor
+// strains read through as Gln. TAA/TGA stay real stops (left as X). The k-th
+// non-gap residue maps to the k-th codon of the domain's coding DNA, matching
+// the residue↔codon convention used in the numbering table.
+function duplicateResidueSequence(res, domain) {
+  const seq = domainResidueSequence(domain);
+  if (!seq.includes('X')) return seq;
+  const codingDna = domainCodingDna(res, domain);
+  return seq
+    .split('')
+    .map((aa, k) =>
+      aa === 'X' && codingDna.slice(k * 3, k * 3 + 3).toUpperCase() === 'TAG'
+        ? 'Q'
+        : aa
+    )
+    .join('');
+}
+
 function duplicateKeyForResult(res) {
   if (res.input_type === 'dna' && Array.isArray(res.domains) && res.domains.length > 0) {
+    // When read-through-as-Q is on, a TAG (amber) stop read through as X is
+    // keyed as if it were a Q, so it collides with the otherwise-identical
+    // stop-free sequence. Other stops (TAA/TGA) and ambiguous X stay as-is.
+    const normalize = window._readthroughAsQ && resultHasInternalStop(res);
     return res.domains
-      .map(domain => `${domain.chain_type}:${domainResidueSequence(domain)}`)
+      .map(domain => {
+        const seq = normalize
+          ? duplicateResidueSequence(res, domain)
+          : domainResidueSequence(domain);
+        return `${domain.chain_type}:${seq}`;
+      })
       .join('|')
       .toUpperCase();
   }
@@ -502,8 +542,146 @@ function duplicateKeyForResult(res) {
 
 // A result contains an internal stop codon if any of its domains read one
 // through (as X). Only DNA/.ab1 inputs ever populate stop_positions.
+// Small inline marker for a result that carries an internal stop codon, used in
+// both the canonical (header) and duplicate cells of the Duplicate Sequence Map.
+function stopBadge(res) {
+  return resultHasInternalStop(res)
+    ? ' <span class="dup-stop-badge" title="Contains an internal TAG (amber) stop codon read through as X">TAG stop codon</span>'
+    : '';
+}
+
 function resultHasInternalStop(res) {
   return (res.domains || []).some(d => (d.stop_positions || []).length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// E. coli codon-optimization scoring
+//
+// Used to break ties when deduplicating DNA inputs: every member of a duplicate
+// group encodes the same protein, but with potentially different codons, so we
+// keep the best-optimized one as the canonical sequence. Three metrics are
+// available (window._codonOptMetric); CAI is the default and the most standard.
+//
+// Codon usage is per-1000 from the E. coli K-12 codon usage table (Kazusa /
+// HIVE-CUTs, GenBank 'Escherichia coli K-12'). Numbers are usage frequency; the
+// CAI relative-adaptiveness values (w) are derived at load time as the per-codon
+// frequency divided by the max frequency within that amino acid's synonymous box.
+// ---------------------------------------------------------------------------
+
+// Usage per 1000 codons, E. coli K-12. Stops (TAA/TAG/TGA) are omitted: they are
+// never interior to a coding span we score, and read-through handling lives
+// elsewhere. Keys are uppercase DNA (T, not U).
+const ECOLI_CODON_USAGE = {
+  TTT: 22.4, TTC: 16.6, TTA: 13.9, TTG: 13.7,
+  CTT: 11.0, CTC: 11.0, CTA: 3.9,  CTG: 52.6,
+  ATT: 30.5, ATC: 25.1, ATA: 4.4,  ATG: 27.9,
+  GTT: 18.3, GTC: 15.3, GTA: 10.9, GTG: 26.4,
+  TCT: 8.5,  TCC: 8.6,  TCA: 7.2,  TCG: 8.9,
+  CCT: 7.0,  CCC: 5.5,  CCA: 8.4,  CCG: 23.2,
+  ACT: 9.0,  ACC: 23.4, ACA: 7.1,  ACG: 14.4,
+  GCT: 15.3, GCC: 25.5, GCA: 20.1, GCG: 33.6,
+  TAT: 16.2, TAC: 12.2,
+  CAT: 12.9, CAC: 9.7,  CAA: 15.3, CAG: 28.8,
+  AAT: 17.7, AAC: 21.7, AAA: 33.6, AAG: 10.3,
+  GAT: 32.1, GAC: 19.1, GAA: 39.4, GAG: 17.8,
+  TGT: 5.2,  TGC: 6.4,  TGG: 15.2,
+  CGT: 20.9, CGC: 22.0, CGA: 3.6,  CGG: 5.4,
+  AGT: 8.8,  AGC: 16.1, AGA: 2.1,  AGG: 1.2,
+  GGT: 24.7, GGC: 29.6, GGA: 8.0,  GGG: 11.1,
+};
+
+// Synonymous-codon boxes by amino acid, used to normalize usage into CAI weights.
+const AA_TO_CODONS = {
+  F: ['TTT', 'TTC'], L: ['TTA', 'TTG', 'CTT', 'CTC', 'CTA', 'CTG'],
+  I: ['ATT', 'ATC', 'ATA'], M: ['ATG'], V: ['GTT', 'GTC', 'GTA', 'GTG'],
+  S: ['TCT', 'TCC', 'TCA', 'TCG', 'AGT', 'AGC'], P: ['CCT', 'CCC', 'CCA', 'CCG'],
+  T: ['ACT', 'ACC', 'ACA', 'ACG'], A: ['GCT', 'GCC', 'GCA', 'GCG'],
+  Y: ['TAT', 'TAC'], H: ['CAT', 'CAC'], Q: ['CAA', 'CAG'],
+  N: ['AAT', 'AAC'], K: ['AAA', 'AAG'], D: ['GAT', 'GAC'], E: ['GAA', 'GAG'],
+  C: ['TGT', 'TGC'], W: ['TGG'], R: ['CGT', 'CGC', 'CGA', 'CGG', 'AGA', 'AGG'],
+  G: ['GGT', 'GGC', 'GGA', 'GGG'],
+};
+
+// Rare E. coli codons whose overuse hurts expression (Arg AGA/AGG/CGA/CGG,
+// Leu CTA, Ile ATA, Pro CCC). Used by the 'rare' metric.
+const ECOLI_RARE_CODONS = new Set([
+  'AGA', 'AGG', 'CGA', 'CGG', 'CTA', 'ATA', 'CCC',
+]);
+
+// Per-codon CAI relative adaptiveness w = freq(codon) / max freq in its AA box.
+const CAI_WEIGHTS = (() => {
+  const w = {};
+  for (const codons of Object.values(AA_TO_CODONS)) {
+    const maxFreq = Math.max(...codons.map(c => ECOLI_CODON_USAGE[c] || 0));
+    for (const c of codons) {
+      w[c] = maxFreq > 0 ? (ECOLI_CODON_USAGE[c] || 0) / maxFreq : 1;
+    }
+  }
+  return w;
+})();
+
+// Each metric maps a coding-DNA span to a score where HIGHER = better optimized
+// for E. coli. Frame: codon k = slice(k*3), matching the rest of the file.
+const CODON_OPT_METRICS = {
+  // Codon Adaptation Index: geometric mean of per-codon relative adaptiveness,
+  // in (0, 1]. The standard measure. Computed in log space for stability.
+  cai(codingDna) {
+    let logSum = 0;
+    let n = 0;
+    for (let i = 0; i + 3 <= codingDna.length; i += 3) {
+      const w = CAI_WEIGHTS[codingDna.slice(i, i + 3).toUpperCase()];
+      if (w == null) continue; // stop codon or ambiguous base — skip
+      logSum += Math.log(w > 0 ? w : 1e-6);
+      n++;
+    }
+    return n === 0 ? 0 : Math.exp(logSum / n);
+  },
+  // Mean E. coli usage frequency (per 1000) across codons. Simpler than CAI.
+  freq(codingDna) {
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i + 3 <= codingDna.length; i += 3) {
+      const f = ECOLI_CODON_USAGE[codingDna.slice(i, i + 3).toUpperCase()];
+      if (f == null) continue;
+      sum += f;
+      n++;
+    }
+    return n === 0 ? 0 : sum / n;
+  },
+  // Negative count of rare codons, so fewer rare codons scores higher.
+  rare(codingDna) {
+    let rareCount = 0;
+    for (let i = 0; i + 3 <= codingDna.length; i += 3) {
+      if (ECOLI_RARE_CODONS.has(codingDna.slice(i, i + 3).toUpperCase())) {
+        rareCount++;
+      }
+    }
+    return -rareCount;
+  },
+};
+
+// Codon-optimization score for a whole result, summed over its domains' coding
+// DNA spans. Protein inputs (no nt coordinates) and non-DNA inputs score 0, so
+// the metric only ever discriminates within DNA-derived duplicate groups.
+function codonOptScore(res) {
+  if (res.input_type !== 'dna') return 0;
+  const metric = CODON_OPT_METRICS[window._codonOptMetric] || CODON_OPT_METRICS.cai;
+  let total = 0;
+  for (const dom of res.domains || []) {
+    total += metric(domainCodingDna(res, dom));
+  }
+  return total;
+}
+
+// True when `res` should replace `current` as the canonical of a duplicate group
+// on codon-optimization grounds. Only applies when both are stop-free DNA inputs
+// (stop-free preference is handled before this is consulted) and the feature is
+// enabled. Strictly greater, so ties keep the earlier (first-seen) member.
+function prefersCodonOpt(res, current) {
+  if (!window._codonOptDedup) return false;
+  if (res.input_type !== 'dna' || current.input_type !== 'dna') return false;
+  if (resultHasInternalStop(res) || resultHasInternalStop(current)) return false;
+  return codonOptScore(res) > codonOptScore(current);
 }
 
 function summarizeResults(results) {
@@ -520,6 +698,37 @@ function summarizeResults(results) {
     }
 
     const match = seen.get(key);
+    // Decide whether this collision should become the group's canonical. Two
+    // reasons to promote, in priority order:
+    //   1. Stop-free wins: the current canonical carries an internal stop and
+    //      this one does not.
+    //   2. Codon optimization breaks ties: both are stop-free DNA inputs and
+    //      this one is better optimized for E. coli (window._codonOptDedup).
+    const promoteForStop =
+      resultHasInternalStop(match.canonical) && !resultHasInternalStop(res);
+    const promoteForCodon =
+      !resultHasInternalStop(match.canonical) && prefersCodonOpt(res, match.canonical);
+    if (promoteForStop || promoteForCodon) {
+      // Promote `res` to canonical and demote the old representative to a dup.
+      const uniqueIdx = uniqueResults.indexOf(match.canonical);
+      if (uniqueIdx !== -1) uniqueResults[uniqueIdx] = res;
+      duplicateMappings.push({
+        duplicateIndex: match.canonicalIndex,
+        duplicate: match.canonical,
+        canonicalIndex: index,
+        canonical: res,
+      });
+      // Re-point any earlier duplicates of this group at the new canonical.
+      duplicateMappings.forEach(m => {
+        if (m.canonical === match.canonical) {
+          m.canonicalIndex = index;
+          m.canonical = res;
+        }
+      });
+      seen.set(key, { canonicalIndex: index, canonical: res });
+      return;
+    }
+
     duplicateMappings.push({
       duplicateIndex: index,
       duplicate: res,
@@ -612,6 +821,12 @@ function toggleUniqueOnly() {
   rerenderResults();
 }
 
+function toggleReadthroughAsQ() {
+  window._readthroughAsQ = document.getElementById('readthroughAsQ').checked;
+  if (!window._lastResults) return;
+  rerenderResults();
+}
+
 // Top-of-results summary. Leads with the count that actually matters — the
 // usable set (correct + unique) — then a logical breakdown of where the rest
 // of the input went.
@@ -672,15 +887,14 @@ function renderDuplicateMap(summary) {
       const duplicateCount = group.duplicates.length;
       const amount = duplicateCount + 1;
       const detailItems = group.duplicates
-        .map(
-          mapping =>
-            `<li>${escHtml(resultLabel(mapping.duplicate, mapping.duplicateIndex))}</li>`
+        .map(mapping =>
+          `<li>${escHtml(resultLabel(mapping.duplicate, mapping.duplicateIndex))}${stopBadge(mapping.duplicate)}</li>`
         )
         .join('');
 
       return `
         <tr>
-          <td><strong>${escHtml(resultLabel(group.canonical, group.canonicalIndex))}</strong></td>
+          <td><strong>${escHtml(resultLabel(group.canonical, group.canonicalIndex))}</strong>${stopBadge(group.canonical)}</td>
           <td>
             <button
               type="button"
@@ -1215,12 +1429,11 @@ function fastaWrap(seq, width = 60) {
   return lines.join('\n');
 }
 
-// The FASTA header label for one domain. Suffixes the chain type, and the
-// domain index when a sequence has more than one domain, to keep ids unique.
+// The FASTA header label for one domain. Suffixes the domain index when a
+// sequence has more than one domain, to keep ids unique.
 function fastaDomainLabel(res, dom, index, domainCount) {
   const suffix = domainCount > 1 ? `_d${index + 1}` : '';
-  const chain = dom.chain_type ? `_${dom.chain_type}` : '';
-  return `${res.id}${chain}${suffix}`;
+  return `${res.id}${suffix}`;
 }
 
 // One FASTA record per domain, using the numbered amino-acid sequence (the
@@ -1273,8 +1486,81 @@ function buildFastaDna(results) {
   return records.join('\n') + (records.length ? '\n' : '');
 }
 
+// Rewrite every in-frame TAG (amber) codon of a coding-DNA span to CAG (Gln),
+// so an amber read-through clone can be re-ordered as the suppressed product.
+// The span is already on the coding strand 5'→3', so codon k is slice(k*3),
+// matching the residue↔codon convention used throughout — this is frame-aware.
+// TAA/TGA are left untouched (they are real stops, not amber).
+function fixAmberCodons(codingDna) {
+  let out = '';
+  for (let i = 0; i < codingDna.length; i += 3) {
+    const codon = codingDna.slice(i, i + 3);
+    out += codon.toUpperCase() === 'TAG' ? 'CAG' : codon;
+  }
+  return out;
+}
+
+// True when the coding-DNA span has at least one in-frame TAG (amber) codon.
+function hasInFrameAmber(codingDna) {
+  for (let i = 0; i < codingDna.length; i += 3) {
+    if (codingDna.slice(i, i + 3).toUpperCase() === 'TAG') return true;
+  }
+  return false;
+}
+
+// Coding-DNA FASTA for only the domains that carry an in-frame amber (TAG) stop,
+// with each TAG rewritten to CAG (Gln) so the read-through clone can be
+// re-ordered/re-synthesized. Domains whose only stops are TAA/TGA are skipped —
+// those aren't amber and can't be sensibly fixed. Independent of the omit
+// filters — these are exactly the records the normal download usually drops.
+function buildStopCodonFastaDna(results) {
+  const records = [];
+  for (const res of results) {
+    if (res.input_type !== 'dna') continue;
+    const domains = res.domains || [];
+    for (const [index, dom] of domains.entries()) {
+      const seq = domainCodingDna(res, dom);
+      if (!seq || !hasInFrameAmber(seq)) continue;
+      records.push(`>${fastaDomainLabel(res, dom, index, domains.length)}\n${fastaWrap(fixAmberCodons(seq))}`);
+    }
+  }
+  return records.join('\n') + (records.length ? '\n' : '');
+}
+
+// Count of records the stop-codon DNA download will emit: one per domain that
+// has an in-frame amber (TAG) codon.
+function stopCodonDnaRecordCount() {
+  const { results } = getRenderedResults();
+  let count = 0;
+  for (const res of results) {
+    if (res.input_type !== 'dna') continue;
+    for (const dom of res.domains || []) {
+      if (hasInFrameAmber(domainCodingDna(res, dom))) count++;
+    }
+  }
+  return count;
+}
+
+function updateStopsDownloadButton() {
+  const btn = document.getElementById('downloadStopsBtn');
+  if (!window._lastResults) {
+    btn.classList.add('hidden');
+    return;
+  }
+  const count = stopCodonDnaRecordCount();
+  // Nothing to fix/re-order if no domain has an in-frame amber (TAG) stop.
+  if (count === 0) {
+    btn.classList.add('hidden');
+    return;
+  }
+  btn.classList.remove('hidden');
+  btn.textContent = `Download Fixed Stop codon DNA (${count})`;
+}
+
 function updateDownloadButton() {
   const btn = document.getElementById('downloadBtn');
+  // The stop-codon DNA button lives next to this one and shares its lifecycle.
+  updateStopsDownloadButton();
   if (!window._lastResults) {
     btn.classList.add('hidden');
     return;
@@ -1482,6 +1768,19 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
+  a.click();
+});
+
+document.getElementById('downloadStopsBtn').addEventListener('click', () => {
+  if (!window._lastResults) return;
+  const scheme = window._lastScheme || document.getElementById('scheme').value;
+  // Ignore the omit-stops filter here: these are exactly the records we want.
+  const { results } = getRenderedResults();
+  const text = buildStopCodonFastaDna(results);
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `anarci_${scheme}_fixed_stop_codon_dna.fasta`;
   a.click();
 });
 
