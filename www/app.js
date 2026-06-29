@@ -1486,6 +1486,65 @@ function buildFastaDna(results) {
   return records.join('\n') + (records.length ? '\n' : '');
 }
 
+// Aligned amino-acid FASTA: every domain is emitted over the same union of
+// numbering positions (collected exactly as the CSV does), with '-' wherever a
+// domain has no residue at a column. Records therefore all share one length, so
+// the file is a ready-to-use multiple sequence alignment.
+function buildFastaAminoAcidsAligned(results) {
+  const positions = collectPythonStylePositions(results);
+  const records = [];
+  for (const res of results) {
+    const domains = res.domains || [];
+    for (const [index, dom] of domains.entries()) {
+      const numbered = new Map(
+        dom.numbering.map(e => [positionKey(e.position, e.insertion || ' '), e.amino_acid])
+      );
+      const seq = positions
+        .map(p => numbered.get(positionKey(p.position, p.insertion)) ?? '-')
+        .join('');
+      records.push(`>${fastaDomainLabel(res, dom, index, domains.length)}\n${fastaWrap(seq)}`);
+    }
+  }
+  return records.join('\n') + (records.length ? '\n' : '');
+}
+
+// The coding-DNA codons of a domain, keyed by numbering position. The k-th
+// non-gap residue maps to the k-th codon of the domain's coding span, matching
+// the residue↔codon convention used throughout. Positions whose residue is a
+// gap carry no codon and are skipped.
+function domainCodonsByPosition(res, dom) {
+  const codingDna = domainCodingDna(res, dom);
+  const map = new Map();
+  let k = 0;
+  for (const entry of dom.numbering) {
+    if (!entry.amino_acid || entry.amino_acid === '-') continue;
+    map.set(positionKey(entry.position, entry.insertion || ' '), codingDna.slice(k * 3, k * 3 + 3));
+    k += 1;
+  }
+  return map;
+}
+
+// Aligned coding-DNA FASTA: the nucleotide analogue of the aligned-AA export.
+// Each numbering column becomes a codon (3 nt); columns a domain lacks are
+// gap-filled with '---', so every record shares one length and the codons stay
+// in frame. DNA inputs only — protein-input domains carry no coordinates.
+function buildFastaDnaAligned(results) {
+  const positions = collectPythonStylePositions(results);
+  const records = [];
+  for (const res of results) {
+    if (res.input_type !== 'dna') continue;
+    const domains = res.domains || [];
+    for (const [index, dom] of domains.entries()) {
+      const codons = domainCodonsByPosition(res, dom);
+      const seq = positions
+        .map(p => codons.get(positionKey(p.position, p.insertion)) ?? '---')
+        .join('');
+      records.push(`>${fastaDomainLabel(res, dom, index, domains.length)}\n${fastaWrap(seq)}`);
+    }
+  }
+  return records.join('\n') + (records.length ? '\n' : '');
+}
+
 // Rewrite every in-frame TAG (amber) codon of a coding-DNA span to CAG (Gln),
 // so an amber read-through clone can be re-ordered as the suppressed product.
 // The span is already on the coding strand 5'→3', so codon k is slice(k*3),
@@ -1575,6 +1634,10 @@ function updateDownloadButton() {
       ? 'Download FASTA (AA)'
       : outputFormat === 'fasta-dna'
       ? 'Download FASTA (DNA)'
+      : outputFormat === 'fasta-aa-aligned'
+      ? 'Download FASTA (AA, aligned)'
+      : outputFormat === 'fasta-dna-aligned'
+      ? 'Download FASTA (DNA, aligned)'
       : outputFormat.startsWith('pim-')
       ? 'Download PIM'
       : 'Download CSV';
@@ -1584,9 +1647,9 @@ function updateDownloadButton() {
   // for the nucleotide variant); other formats emit one row per sequence.
   const results = getResultsForDownload();
   let count;
-  if (outputFormat === 'fasta-aa') {
+  if (outputFormat === 'fasta-aa' || outputFormat === 'fasta-aa-aligned') {
     count = results.reduce((n, res) => n + (res.domains || []).length, 0);
-  } else if (outputFormat === 'fasta-dna') {
+  } else if (outputFormat === 'fasta-dna' || outputFormat === 'fasta-dna-aligned') {
     count = results.reduce(
       (n, res) => n + (res.input_type === 'dna' ? (res.domains || []).length : 0),
       0
@@ -1753,6 +1816,14 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
     text = buildFastaDna(results);
     mimeType = 'text/plain';
     filename = `anarci_${scheme}_dna.fasta`;
+  } else if (outputFormat === 'fasta-aa-aligned') {
+    text = buildFastaAminoAcidsAligned(results);
+    mimeType = 'text/plain';
+    filename = `anarci_${scheme}_aa_aligned.fasta`;
+  } else if (outputFormat === 'fasta-dna-aligned') {
+    text = buildFastaDnaAligned(results);
+    mimeType = 'text/plain';
+    filename = `anarci_${scheme}_dna_aligned.fasta`;
   } else if (outputFormat.startsWith('pim-')) {
     const scope = outputFormat.slice(4);
     text = compute_pim(JSON.stringify(results), scope, scheme);
