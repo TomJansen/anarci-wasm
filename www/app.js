@@ -490,6 +490,21 @@ function cdrClassForPosition(pos, scheme, chainClass) {
   return '';
 }
 
+// Length of a domain's CDR3 (non-gap residues within the scheme's CDR3 range).
+// Kappa and lambda share the light-chain position ranges.
+function cdr3Length(dom, scheme) {
+  const cc = (dom.chain_class === 'K' || dom.chain_class === 'L') ? 'L' : dom.chain_class;
+  const ranges = (CDR_RANGES[scheme] || {})[cc] || [];
+  if (ranges.length < 3) return null;
+  const [start, end] = ranges[2];
+  let n = 0;
+  for (const e of dom.numbering) {
+    if (e.amino_acid === '-') continue;
+    if (e.position >= start && e.position <= end) n += 1;
+  }
+  return n;
+}
+
 function resultLabel(res, index) {
   return `${res.id} [${index + 1}]`;
 }
@@ -1325,7 +1340,7 @@ function collectPythonStylePositions(results) {
   });
 }
 
-function buildPythonStyleCsv(results) {
+function buildPythonStyleCsv(results, scheme) {
   const positions = collectPythonStylePositions(results);
   const fields = [
     'Id',
@@ -1341,6 +1356,8 @@ function buildPythonStyleCsv(results) {
     'v_identity',
     'j_gene',
     'j_identity',
+    'heavy_cdr3_length',
+    'full_length_aa',
     ...positions.map(p => positionLabel(p.position, p.insertion)),
   ];
 
@@ -1366,6 +1383,8 @@ function buildPythonStyleCsv(results) {
         dom.v_identity ? dom.v_identity.toFixed(2) : '',
         dom.j_gene ?? '',
         dom.j_identity ? dom.j_identity.toFixed(2) : '',
+        dom.chain_class === 'H' ? (cdr3Length(dom, scheme) ?? '') : '',
+        domainResidueSequence(dom),
         ...positions.map(p => numbered.get(positionKey(p.position, p.insertion)) ?? '-'),
       ];
 
@@ -1837,7 +1856,7 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
     mimeType = 'text/csv';
     filename = `anarci_pim_${scope}_${scheme}.csv`;
   } else {
-    text = buildPythonStyleCsv(results);
+    text = buildPythonStyleCsv(results, scheme);
     mimeType = 'text/csv';
     filename = `anarci_${scheme}.csv`;
   }
