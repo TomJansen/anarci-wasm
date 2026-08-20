@@ -1616,31 +1616,38 @@ function updateStopsDownloadButton() {
   btn.textContent = `Download Fixed Stop codon DNA (${count})`;
 }
 
+function downloadButtonBase(outputFormat) {
+  return outputFormat === 'anarci'
+    ? 'Download ANARCI text'
+    : outputFormat === 'fasta-aa'
+    ? 'Download FASTA (AA)'
+    : outputFormat === 'fasta-dna'
+    ? 'Download FASTA (DNA)'
+    : outputFormat === 'fasta-aa-aligned'
+    ? 'Download FASTA (AA, aligned)'
+    : outputFormat === 'fasta-dna-aligned'
+    ? 'Download FASTA (DNA, aligned)'
+    : outputFormat.startsWith('pim-')
+    ? 'Download PIM'
+    : 'Download CSV';
+}
+
 function updateDownloadButton() {
   const btn = document.getElementById('downloadBtn');
   // The stop-codon DNA button lives next to this one and shares its lifecycle.
   updateStopsDownloadButton();
+
+  const outputFormat = document.getElementById('outputFormat').value;
+  // Keep the label in sync with the selected format even before any run, so the
+  // hidden button doesn't reveal a stale "Download CSV" the moment it appears.
+  const base = downloadButtonBase(outputFormat);
+
   if (!window._lastResults) {
+    btn.textContent = base;
     btn.classList.add('hidden');
     return;
   }
-
-  const outputFormat = document.getElementById('outputFormat').value;
   btn.classList.remove('hidden');
-  const base =
-    outputFormat === 'anarci'
-      ? 'Download ANARCI text'
-      : outputFormat === 'fasta-aa'
-      ? 'Download FASTA (AA)'
-      : outputFormat === 'fasta-dna'
-      ? 'Download FASTA (DNA)'
-      : outputFormat === 'fasta-aa-aligned'
-      ? 'Download FASTA (AA, aligned)'
-      : outputFormat === 'fasta-dna-aligned'
-      ? 'Download FASTA (DNA, aligned)'
-      : outputFormat.startsWith('pim-')
-      ? 'Download PIM'
-      : 'Download CSV';
 
   // Show how much the download will contain, so the omit filters' effect is
   // visible before clicking. FASTA exports emit one record per domain (DNA only
