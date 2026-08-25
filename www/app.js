@@ -15,8 +15,14 @@ window._readthroughAsQ = false;
 // Metric is one of 'cai' (default), 'freq', or 'rare' — see CODON_OPT_METRICS.
 window._codonOptDedup = true;
 window._codonOptMetric = 'cai';
+// Manual canonical picks for duplicate groups: duplicate key -> result index in
+// window._lastResults. Set from the "Use this" buttons in the duplicate map and
+// overrides the automatic (stop-free / codon-optimization / first-seen) choice.
+window._canonicalOverrides = new Map();
 // Summary panels are collapsed by default.
 window._duplicateMapCollapsed = true;
+// Per-group duplicate detail rows expanded, driven by the expand/collapse all button.
+window._duplicateDetailsExpanded = false;
 window._stopCodonMapCollapsed = true;
 window._noDomainMapCollapsed = true;
 const MAX_PARALLEL_WORKERS = 4;
@@ -394,6 +400,9 @@ async function runNumbering() {
     );
     window._lastResults = results;
     window._lastScheme = scheme;
+    // Picks are indices into the previous result set — drop them on a new run.
+    window._canonicalOverrides.clear();
+    window._duplicateDetailsExpanded = false;
     rerenderResults();
   } catch(e) {
     if (runToken === activeRunToken) {
@@ -437,6 +446,8 @@ function resetPage() {
   window._duplicateMapCollapsed = true;
   window._stopCodonMapCollapsed = true;
   window._noDomainMapCollapsed = true;
+  window._canonicalOverrides.clear();
+  window._duplicateDetailsExpanded = false;
   updateUniqueToggleButton();
 
   if (wasmReady) {
@@ -699,6 +710,13 @@ function prefersCodonOpt(res, current) {
   return codonOptScore(res) > codonOptScore(current);
 }
 
+// A manual pick (from the duplicate map's "Use this" button) beats every
+// automatic rule, so `res` is promoted whenever it is the chosen index and the
+// current canonical is not.
+function isManualPick(key, index) {
+  return window._canonicalOverrides.get(key) === index;
+}
+
 function summarizeResults(results) {
   const seen = new Map();
   const uniqueResults = [];
@@ -713,21 +731,27 @@ function summarizeResults(results) {
     }
 
     const match = seen.get(key);
-    // Decide whether this collision should become the group's canonical. Two
+    // Decide whether this collision should become the group's canonical. Three
     // reasons to promote, in priority order:
+    //   0. Manual pick: the user chose this member in the duplicate map.
     //   1. Stop-free wins: the current canonical carries an internal stop and
     //      this one does not.
     //   2. Codon optimization breaks ties: both are stop-free DNA inputs and
     //      this one is better optimized for E. coli (window._codonOptDedup).
+    const pinned = isManualPick(key, match.canonicalIndex);
+    const promoteForPick = !pinned && isManualPick(key, index);
     const promoteForStop =
-      resultHasInternalStop(match.canonical) && !resultHasInternalStop(res);
+      !pinned && resultHasInternalStop(match.canonical) && !resultHasInternalStop(res);
     const promoteForCodon =
-      !resultHasInternalStop(match.canonical) && prefersCodonOpt(res, match.canonical);
-    if (promoteForStop || promoteForCodon) {
+      !pinned &&
+      !resultHasInternalStop(match.canonical) &&
+      prefersCodonOpt(res, match.canonical);
+    if (promoteForPick || promoteForStop || promoteForCodon) {
       // Promote `res` to canonical and demote the old representative to a dup.
       const uniqueIdx = uniqueResults.indexOf(match.canonical);
       if (uniqueIdx !== -1) uniqueResults[uniqueIdx] = res;
       duplicateMappings.push({
+        key,
         duplicateIndex: match.canonicalIndex,
         duplicate: match.canonical,
         canonicalIndex: index,
@@ -745,6 +769,7 @@ function summarizeResults(results) {
     }
 
     duplicateMappings.push({
+      key,
       duplicateIndex: index,
       duplicate: res,
       canonicalIndex: match.canonicalIndex,
@@ -781,6 +806,7 @@ function groupDuplicateMappings(duplicateMappings) {
     const key = mapping.canonicalIndex;
     if (!groups.has(key)) {
       groups.set(key, {
+        key: mapping.key,
         canonicalIndex: mapping.canonicalIndex,
         canonical: mapping.canonical,
         duplicates: [],
@@ -788,6 +814,10 @@ function groupDuplicateMappings(duplicateMappings) {
     }
     groups.get(key).duplicates.push(mapping);
   });
+
+  // Keep each group's duplicate list in input order — promotions (automatic or
+  // from a manual pick) otherwise leave it in the order members were demoted.
+  groups.forEach(group => group.duplicates.sort((a, b) => a.duplicateIndex - b.duplicateIndex));
 
   return Array.from(groups.values()).sort((a, b) => a.canonicalIndex - b.canonicalIndex);
 }
@@ -896,34 +926,48 @@ function renderDuplicateMap(summary) {
   const duplicateCount = duplicateMappings.length;
   const groups = groupDuplicateMappings(duplicateMappings);
 
+  const detailsExpanded = window._duplicateDetailsExpanded;
   const rows = groups
     .map((group, groupIndex) => {
       const detailId = `duplicate-detail-${groupIndex}`;
       const duplicateCount = group.duplicates.length;
       const amount = duplicateCount + 1;
+      const pinned = window._canonicalOverrides.get(group.key) === group.canonicalIndex;
+      // Each non-canonical member gets a button that promotes it to the group's
+      // representative; the promoted one then moves to the "Unique" column.
       const detailItems = group.duplicates
         .map(mapping =>
-          `<li>${escHtml(resultLabel(mapping.duplicate, mapping.duplicateIndex))}${stopBadge(mapping.duplicate)}</li>`
+          `<li>
+            <span class="duplicate-detail-label">${escHtml(resultLabel(mapping.duplicate, mapping.duplicateIndex))}${stopBadge(mapping.duplicate)}</span>
+            <button
+              type="button"
+              class="duplicate-pick-btn"
+              data-group-index="${groupIndex}"
+              data-pick-index="${mapping.duplicateIndex}"
+              title="Make this the representative sequence for this duplicate group"
+            >Use this</button>
+          </li>`
         )
         .join('');
 
       return `
         <tr>
-          <td><strong>${escHtml(resultLabel(group.canonical, group.canonicalIndex))}</strong>${stopBadge(group.canonical)}</td>
+          <td>
+            <strong>${escHtml(resultLabel(group.canonical, group.canonicalIndex))}</strong>${stopBadge(group.canonical)}
+            ${pinned ? '<span class="duplicate-pinned-badge" title="Manually selected representative">picked</span>' : ''}
+          </td>
           <td>
             <button
               type="button"
               class="duplicate-expand-btn"
-              aria-expanded="false"
+              aria-expanded="${detailsExpanded}"
               aria-controls="${detailId}"
               data-detail-id="${detailId}"
-            >
-              Show ${duplicateCount} ${pluralize(duplicateCount, 'sequence')}
-            </button>
+            >${detailsExpanded ? 'Hide' : 'Show'} ${duplicateCount} ${pluralize(duplicateCount, 'sequence')}</button>
           </td>
           <td>${amount}</td>
         </tr>
-        <tr id="${detailId}" class="duplicate-detail-row hidden">
+        <tr id="${detailId}" class="duplicate-detail-row${detailsExpanded ? '' : ' hidden'}">
           <td colspan="3" class="duplicate-detail-cell">
             <ul class="duplicate-detail-list">${detailItems}</ul>
           </td>
@@ -941,7 +985,13 @@ function renderDuplicateMap(summary) {
     <div id="duplicateMapBody" class="duplicate-map-body${collapsed ? ' hidden' : ''}">
       ${duplicateMappings.length === 0
         ? '<p class="dup-note">No duplicate sequences.</p>'
-        : `<table class="duplicate-map-table">
+        : `<div class="duplicate-map-actions">
+        <button type="button" class="duplicate-expand-all-btn">${detailsExpanded ? 'Collapse' : 'Expand'} all</button>
+        ${window._canonicalOverrides.size > 0
+          ? '<button type="button" class="duplicate-reset-picks-btn">Reset picks</button>'
+          : ''}
+      </div>
+      <table class="duplicate-map-table">
         <thead>
           <tr>
             <th>Unique</th>
@@ -978,18 +1028,58 @@ function renderDuplicateMap(summary) {
     toggleMap();
   });
 
+  const setRowExpanded = (btn, expanded) => {
+    const row = container.querySelector(`#${btn.dataset.detailId}`);
+    if (!row) return;
+    row.classList.toggle('hidden', !expanded);
+    btn.setAttribute('aria-expanded', String(expanded));
+    btn.textContent = expanded
+      ? btn.textContent.replace(/^Show/, 'Hide')
+      : btn.textContent.replace(/^Hide/, 'Show');
+  };
+
   container.querySelectorAll('.duplicate-expand-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const detailId = btn.dataset.detailId;
-      const row = container.querySelector(`#${detailId}`);
+      const row = container.querySelector(`#${btn.dataset.detailId}`);
       if (!row) return;
-      const isHidden = row.classList.toggle('hidden');
-      btn.setAttribute('aria-expanded', String(!isHidden));
-      btn.textContent = isHidden
-        ? btn.textContent.replace(/^Hide/, 'Show')
-        : btn.textContent.replace(/^Show/, 'Hide');
+      setRowExpanded(btn, row.classList.contains('hidden'));
     });
   });
+
+  // Expand/collapse every group at once. The state is remembered on the window
+  // so a rerender (e.g. after picking a representative) keeps the rows open.
+  const expandAllBtn = container.querySelector('.duplicate-expand-all-btn');
+  if (expandAllBtn) {
+    expandAllBtn.addEventListener('click', () => {
+      const expand = !window._duplicateDetailsExpanded;
+      window._duplicateDetailsExpanded = expand;
+      container.querySelectorAll('.duplicate-expand-btn').forEach(btn => setRowExpanded(btn, expand));
+      expandAllBtn.textContent = expand ? 'Collapse all' : 'Expand all';
+    });
+  }
+
+  // Promote a duplicate to its group's representative. Rerendering re-runs
+  // dedup with the override in place, so the pick moves to the Unique column
+  // and flows through to the summary, result cards and downloads.
+  container.querySelectorAll('.duplicate-pick-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = groups[Number(btn.dataset.groupIndex)];
+      if (!group) return;
+      window._canonicalOverrides.set(group.key, Number(btn.dataset.pickIndex));
+      // Keep the details visible after the rerender so the swap is easy to see
+      // and a different member can be picked straight away.
+      window._duplicateDetailsExpanded = true;
+      rerenderResults();
+    });
+  });
+
+  const resetPicksBtn = container.querySelector('.duplicate-reset-picks-btn');
+  if (resetPicksBtn) {
+    resetPicksBtn.addEventListener('click', () => {
+      window._canonicalOverrides.clear();
+      rerenderResults();
+    });
+  }
 }
 
 function rerenderResults() {
