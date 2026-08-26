@@ -1,6 +1,5 @@
 /// Martin (extended Chothia) numbering scheme for heavy and light chains.
 /// Direct port of the Python numbering logic from ANARCI schemes.py.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
@@ -129,11 +128,7 @@ pub fn number_martin_heavy(
         let length = regions[4].len();
         let insertions = if length > 8 { length - 8 } else { 0 };
         // Delete order: 52, 51, 50, 53, 54, 55, 56, 57
-        let front: Vec<(i32, String)> = vec![
-            (50, " ".into()),
-            (51, " ".into()),
-            (52, " ".into()),
-        ];
+        let front: Vec<(i32, String)> = vec![(50, " ".into()), (51, " ".into()), (52, " ".into())];
         let back: Vec<(i32, String)> = vec![
             (53, " ".into()),
             (54, " ".into()),

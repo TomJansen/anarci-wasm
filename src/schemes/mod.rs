@@ -1,11 +1,10 @@
+pub mod aho;
+pub mod chothia;
 /// Numbering scheme implementations.
 /// Each scheme converts a state vector (IMGT HMM alignment) to a numbered sequence.
-
 pub mod imgt;
-pub mod chothia;
 pub mod kabat;
 pub mod martin;
-pub mod aho;
 pub mod wolfguy;
 
 use crate::alignment::{NumberedResidue, StateVectorEntry};

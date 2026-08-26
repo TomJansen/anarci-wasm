@@ -1,0 +1,5 @@
+/target
+*.time
+Cargo.lock
+.omc/
+.claude/

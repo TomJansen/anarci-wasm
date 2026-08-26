@@ -1,0 +1,36 @@
+[package]
+name = "rustyhmmer"
+version = "0.1.4"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Sunju Kim <n.e.coli.1822@gmail.com>"]
+description = "Pure-Rust HMMER3 hmmsearch, byte-identical to HMMER 3.4 for protein profile-HMM search"
+license = "BSD-3-Clause"
+readme = "README.md"
+repository = "https://github.com/necoli1822/rustyhmmer"
+homepage = "https://github.com/necoli1822/rustyhmmer"
+documentation = "https://docs.rs/rustyhmmer"
+keywords = ["bioinformatics", "hmmer", "profile-hmm", "protein", "annotation"]
+categories = ["science", "command-line-utilities"]
+# Ship ONLY source + metadata in the published crate. A strict whitelist so no
+# test data, golden fixtures, examples, or dev artifacts can ever leak into the
+# release tarball (src/bin/hmmsearch.rs ships — it is the CLI feature).
+include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE"]
+
+[lib]
+name = "rustyhmmer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustyhmmer-hmmsearch"
+path = "src/bin/hmmsearch.rs"
+
+[dependencies]
+rayon = "1.12"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false

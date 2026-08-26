@@ -1,14 +1,13 @@
 /// State vector extraction and core numbering logic.
 /// Ports the key functions from ANARCI's anarci.py and schemes.py.
-
 use crate::ViterbiHit;
 
 /// Insertion alphabet: A-Z, AA-ZZ, then space for "no insertion"
 pub const ALPHABET: &[&str] = &[
-    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R",
-    "S", "T", "U", "V", "W", "X", "Y", "Z", "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
-    "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP", "QQ", "RR", "SS", "TT", "UU", "VV", "WW",
-    "XX", "YY", "ZZ", " ",
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S",
+    "T", "U", "V", "W", "X", "Y", "Z", "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH", "II", "JJ",
+    "KK", "LL", "MM", "NN", "OO", "PP", "QQ", "RR", "SS", "TT", "UU", "VV", "WW", "XX", "YY", "ZZ",
+    " ",
 ];
 
 /// A state in the alignment: (hmm_state_1based, state_type)
@@ -209,8 +208,7 @@ pub fn smooth_insertions(state_vector: Vec<StateVectorEntry>) -> Vec<StateVector
                     } else {
                         // C-terminal FW
                         let prefix = pattern[..3].to_vec();
-                        let extra: Vec<(usize, char)> =
-                            vec![pattern[2]; buf_len.saturating_sub(3)];
+                        let extra: Vec<(usize, char)> = vec![pattern[2]; buf_len.saturating_sub(3)];
                         [prefix, extra].concat()
                     };
 
@@ -257,12 +255,17 @@ pub fn number_regions(
     sequence: &[u8],
     state_vector: &[StateVectorEntry],
     state_string: &[u8],  // 128 bytes, 'X' or 'I'
-    region_string: &[u8],  // 128 bytes, region labels
+    region_string: &[u8], // 128 bytes, region labels
     region_index_map: &std::collections::HashMap<u8, usize>,
     rels: &mut Vec<i32>,
     n_regions: usize,
     exclude_deletions: &[usize],
-) -> (Vec<Vec<NumberedResidue>>, Option<usize>, Option<usize>, bool) {
+) -> (
+    Vec<Vec<NumberedResidue>>,
+    Option<usize>,
+    Option<usize>,
+    bool,
+) {
     let sv = smooth_insertions(state_vector.to_vec());
 
     let mut regions: Vec<Vec<NumberedResidue>> = (0..n_regions).map(|_| Vec::new()).collect();
@@ -532,9 +535,16 @@ pub fn get_cdr3_annotations(length: usize, scheme: &str, chain_type: &str) -> Ve
     if (scheme == "chothia" || scheme == "kabat") && chain_type == "heavy" {
         let insertions = if length > 10 { length - 10 } else { 0 };
         let ordered: Vec<(i32, String)> = vec![
-            (100, " ".into()), (99, " ".into()), (98, " ".into()), (97, " ".into()),
-            (96, " ".into()), (95, " ".into()), (101, " ".into()), (102, " ".into()),
-            (94, " ".into()), (93, " ".into()),
+            (100, " ".into()),
+            (99, " ".into()),
+            (98, " ".into()),
+            (97, " ".into()),
+            (96, " ".into()),
+            (95, " ".into()),
+            (101, " ".into()),
+            (102, " ".into()),
+            (94, " ".into()),
+            (93, " ".into()),
         ];
         let skip = if 10 > length { 10 - length } else { 0 };
         let mut anns: Vec<(i32, String)> = ordered[skip..].to_vec();
@@ -546,8 +556,14 @@ pub fn get_cdr3_annotations(length: usize, scheme: &str, chain_type: &str) -> Ve
     } else if (scheme == "chothia" || scheme == "kabat") && chain_type == "light" {
         let insertions = if length > 9 { length - 9 } else { 0 };
         let ordered: Vec<(i32, String)> = vec![
-            (95, " ".into()), (94, " ".into()), (93, " ".into()), (92, " ".into()),
-            (91, " ".into()), (96, " ".into()), (97, " ".into()), (90, " ".into()),
+            (95, " ".into()),
+            (94, " ".into()),
+            (93, " ".into()),
+            (92, " ".into()),
+            (91, " ".into()),
+            (96, " ".into()),
+            (97, " ".into()),
+            (90, " ".into()),
             (89, " ".into()),
         ];
         let skip = if 9 > length { 9 - length } else { 0 };

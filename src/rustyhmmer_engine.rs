@@ -1,8 +1,10 @@
 use crate::{ViterbiHit, HMM_DATA};
+use rustyhmmer::api::HmmDomain;
 use rustyhmmer::hmmfile::P7Hmm;
 use rustyhmmer::pipeline::Model;
 use rustyhmmer::pli::Pipeline;
 use rustyhmmer::seqio::Seq;
+use rustyhmmer::tblout::fmt_g;
 use std::sync::OnceLock;
 
 static RUSTYHMMER_MODELS: OnceLock<Vec<Model>> = OnceLock::new();
@@ -21,8 +23,8 @@ struct RustyAlignedHit {
     query_alignment: String,
 }
 
-/// Use rustyhmmer for HMMER-compatible scoring and parse its HMMER-style
-/// alignment display into the state path ANARCI numbering consumes.
+/// Use rustyhmmer for HMMER-compatible scoring and convert its structured
+/// domain alignments into the state path ANARCI numbering consumes.
 pub(crate) fn search_hits(
     sequence: &[u8],
     bit_score_threshold: f64,
@@ -79,18 +81,25 @@ fn search_sequence(
         hit.seq_idx = 0;
 
         pli.domz = 1.0;
-        let mut report = String::new();
-        rustyhmmer::report::domains(
-            &mut report,
-            &[&hit],
-            &pli,
-            100_000,
-            &model.hmm,
-            &model.fwd,
-            &seqs,
-        );
-
-        for parsed in parse_rustyhmmer_domains(&report, &model.hmm.name)? {
+        for parsed in hit.domains.iter().filter_map(|domain| {
+            if !pli.domain_reportable(domain.bitscore, domain.lnp) {
+                return None;
+            }
+            let (model_alignment, query_alignment) =
+                rustyhmmer_domain_alignment(domain, model, &seqs[0]);
+            Some(RustyAlignedHit {
+                hmm_name: model.hmm.name.clone(),
+                bit_score: domain.bitscore as f64,
+                evalue: domain.lnp.exp() * z,
+                evalue_text: fmt_g(domain.lnp.exp() * z, 2),
+                seq_start: domain.ali_from as usize - 1,
+                seq_end: domain.ali_to as usize,
+                hmm_start: domain.hmm_from as usize,
+                hmm_end: domain.hmm_to as usize,
+                model_alignment,
+                query_alignment,
+            })
+        }) {
             if parsed.bit_score >= bit_score_threshold {
                 hits.push(parsed);
             }
@@ -101,79 +110,13 @@ fn search_sequence(
     Ok(hits)
 }
 
-fn parse_rustyhmmer_domains(text: &str, hmm_name: &str) -> Result<Vec<RustyAlignedHit>, String> {
-    let mut hits = Vec::new();
-    let mut current: Option<RustyAlignedHit> = None;
-    let mut in_alignments = false;
-    let mut expect_model = false;
-    let mut expect_query = false;
-
-    for line in text.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if line.contains("Alignments for each domain:") {
-            in_alignments = true;
-            continue;
-        }
-        if !in_alignments {
-            if fields.len() >= 16 && fields[0].parse::<usize>().is_ok() {
-                if let Some(hit) = current.take() {
-                    hits.push(hit);
-                }
-                current = Some(RustyAlignedHit {
-                    hmm_name: hmm_name.to_string(),
-                    bit_score: fields[2]
-                        .parse()
-                        .map_err(|_| format!("could not parse bit score from {line:?}"))?,
-                    evalue: fields[5]
-                        .parse()
-                        .map_err(|_| format!("could not parse evalue from {line:?}"))?,
-                    evalue_text: fields[5].to_string(),
-                    hmm_start: fields[6]
-                        .parse()
-                        .map_err(|_| format!("could not parse hmm start from {line:?}"))?,
-                    hmm_end: fields[7]
-                        .parse()
-                        .map_err(|_| format!("could not parse hmm end from {line:?}"))?,
-                    seq_start: fields[9]
-                        .parse::<usize>()
-                        .map_err(|_| format!("could not parse seq start from {line:?}"))?
-                        - 1,
-                    seq_end: fields[10]
-                        .parse()
-                        .map_err(|_| format!("could not parse seq end from {line:?}"))?,
-                    model_alignment: String::new(),
-                    query_alignment: String::new(),
-                });
-            }
-            continue;
-        }
-
-        if line.trim_start().starts_with("== domain ") {
-            expect_model = true;
-            expect_query = false;
-            continue;
-        }
-        if expect_model && fields.len() >= 4 && fields[0] == hmm_name {
-            if let Some(hit) = current.as_mut() {
-                hit.model_alignment.push_str(fields[2]);
-            }
-            expect_model = false;
-            expect_query = true;
-            continue;
-        }
-        if expect_query && fields.len() >= 4 && fields[1].parse::<usize>().is_ok() {
-            if let Some(hit) = current.as_mut() {
-                hit.query_alignment.push_str(fields[2]);
-            }
-            expect_query = false;
-        }
-    }
-
-    if let Some(hit) = current {
-        hits.push(hit);
-    }
-
-    Ok(hits)
+fn rustyhmmer_domain_alignment(
+    domain: &rustyhmmer::pipeline::DomHit,
+    model: &Model,
+    seq: &Seq,
+) -> (String, String) {
+    let api_domain = HmmDomain::from_domain(domain, model, seq, 1.0, 1.0);
+    (api_domain.model_alignment, api_domain.query_alignment)
 }
 
 fn rusty_hit_to_viterbi(hit: &RustyAlignedHit) -> ViterbiHit {

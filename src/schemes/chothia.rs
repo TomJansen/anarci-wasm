@@ -1,6 +1,5 @@
 /// Chothia numbering scheme implementation for heavy and light chains.
 /// Port of number_chothia_heavy and number_chothia_light from Python ANARCI schemes.py.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
@@ -266,10 +265,8 @@ pub fn number_chothia_light(
     let length_r3 = regions[3].len();
     let insertions_r3 = if length_r3 > 4 { length_r3 - 4 } else { 0 };
     if insertions_r3 > 0 {
-        let mut annotations_r3: Vec<(i32, String)> = vec![
-            (51, " ".to_string()),
-            (52, " ".to_string()),
-        ];
+        let mut annotations_r3: Vec<(i32, String)> =
+            vec![(51, " ".to_string()), (52, " ".to_string())];
         for i in 0..insertions_r3 {
             annotations_r3.push((52, ALPHABET[i].to_string()));
         }

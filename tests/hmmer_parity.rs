@@ -226,7 +226,10 @@ fn assert_numbering_results_match(
 ) {
     assert_eq!(rusty.len(), hmmer.len(), "{case_name}: sequence count");
     assert_eq!(rusty[0].id, hmmer[0].id, "{case_name}: id");
-    assert_eq!(rusty[0].sequence, hmmer[0].sequence, "{case_name}: sequence");
+    assert_eq!(
+        rusty[0].sequence, hmmer[0].sequence,
+        "{case_name}: sequence"
+    );
     assert!(
         !hmmer[0].domains.is_empty(),
         "{case_name}: HMMER backend found no domains"
@@ -237,11 +240,8 @@ fn assert_numbering_results_match(
         "{case_name}: domain count"
     );
 
-    for (domain_index, (rusty_domain, hmmer_domain)) in rusty[0]
-        .domains
-        .iter()
-        .zip(&hmmer[0].domains)
-        .enumerate()
+    for (domain_index, (rusty_domain, hmmer_domain)) in
+        rusty[0].domains.iter().zip(&hmmer[0].domains).enumerate()
     {
         assert_eq!(
             rusty_domain.species, hmmer_domain.species,

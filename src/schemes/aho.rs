@@ -1,6 +1,5 @@
 /// Aho numbering scheme implementation.
 /// Port of number_aho from Python ANARCI schemes.py.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
@@ -118,14 +117,30 @@ pub fn number_aho(
     // ========================
     // Gap ordering depends on chain type
     let cdr1_deletions: Vec<i32> = match chain_type {
-        "L" => vec![28, 36, 35, 37, 34, 38, 27, 29, 33, 39, 32, 40, 26, 30, 25, 31, 41, 42],
-        "K" => vec![28, 27, 36, 35, 37, 34, 38, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        "H" => vec![28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        "A" => vec![28, 36, 35, 37, 34, 38, 33, 39, 27, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        "B" => vec![28, 36, 35, 37, 34, 38, 33, 39, 27, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        "D" => vec![28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        "G" => vec![28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42],
-        _ => vec![28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42],
+        "L" => vec![
+            28, 36, 35, 37, 34, 38, 27, 29, 33, 39, 32, 40, 26, 30, 25, 31, 41, 42,
+        ],
+        "K" => vec![
+            28, 27, 36, 35, 37, 34, 38, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        "H" => vec![
+            28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        "A" => vec![
+            28, 36, 35, 37, 34, 38, 33, 39, 27, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        "B" => vec![
+            28, 36, 35, 37, 34, 38, 33, 39, 27, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        "D" => vec![
+            28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        "G" => vec![
+            28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
+        _ => vec![
+            28, 36, 35, 37, 34, 38, 27, 33, 39, 32, 40, 29, 26, 30, 25, 31, 41, 42,
+        ],
     };
 
     let length = regions[3].len();
@@ -141,7 +156,11 @@ pub fn number_aho(
         return (Vec::new(), startindex, endindex);
     } else if insertions > 0 {
         // Insert on position 36
-        let insertat = annotations.iter().position(|a| a.0 == 36 && a.1 == " ").unwrap() + 1;
+        let insertat = annotations
+            .iter()
+            .position(|a| a.0 == 36 && a.1 == " ")
+            .unwrap()
+            + 1;
         let ins_annotations: Vec<(i32, String)> = (0..insertions)
             .map(|a| (36, ALPHABET[a].to_string()))
             .collect();
@@ -156,9 +175,13 @@ pub fn number_aho(
     // CDR2 - Region F (index 5)
     // ========================
     let cdr2_deletions: Vec<i32> = if chain_type == "A" {
-        vec![74, 73, 63, 62, 64, 61, 65, 60, 66, 59, 67, 58, 68, 69, 70, 71, 72, 75, 76, 77]
+        vec![
+            74, 73, 63, 62, 64, 61, 65, 60, 66, 59, 67, 58, 68, 69, 70, 71, 72, 75, 76, 77,
+        ]
     } else {
-        vec![63, 62, 64, 61, 65, 60, 66, 59, 67, 58, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77]
+        vec![
+            63, 62, 64, 61, 65, 60, 66, 59, 67, 58, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+        ]
     };
 
     let length = regions[5].len();
@@ -173,7 +196,11 @@ pub fn number_aho(
     if insertions > 26 {
         return (Vec::new(), startindex, endindex);
     } else if insertions > 0 {
-        let insertat = annotations.iter().position(|a| a.0 == 63 && a.1 == " ").unwrap() + 1;
+        let insertat = annotations
+            .iter()
+            .position(|a| a.0 == 63 && a.1 == " ")
+            .unwrap()
+            + 1;
         let ins_annotations: Vec<(i32, String)> = (0..insertions)
             .map(|a| (63, ALPHABET[a].to_string()))
             .collect();
@@ -187,7 +214,9 @@ pub fn number_aho(
     // ========================
     // FW3 - Region H (index 7)
     // ========================
-    let fw3_deletions: Vec<i32> = vec![86, 85, 87, 84, 88, 83, 89, 82, 90, 81, 91, 80, 92, 79, 93, 78];
+    let fw3_deletions: Vec<i32> = vec![
+        86, 85, 87, 84, 88, 83, 89, 82, 90, 81, 91, 80, 92, 79, 93, 78,
+    ];
     let length = regions[7].len();
     let skip = if 16 > length { 16 - length } else { 0 };
     let mut annotations: Vec<(i32, String)> = {
@@ -200,7 +229,11 @@ pub fn number_aho(
     if insertions > 26 {
         return (Vec::new(), startindex, endindex);
     } else if insertions > 0 {
-        let insertat = annotations.iter().position(|a| a.0 == 85 && a.1 == " ").unwrap() + 1;
+        let insertat = annotations
+            .iter()
+            .position(|a| a.0 == 85 && a.1 == " ")
+            .unwrap()
+            + 1;
         let ins_annotations: Vec<(i32, String)> = (0..insertions)
             .map(|a| (85, ALPHABET[a].to_string()))
             .collect();
@@ -215,9 +248,8 @@ pub fn number_aho(
     // CDR3 - Region J (index 9)
     // ========================
     let cdr3_deletions: Vec<i32> = vec![
-        123, 124, 122, 125, 121, 126, 120, 127, 119, 128, 118, 129, 117, 130,
-        116, 131, 115, 132, 114, 133, 113, 134, 112, 135, 111, 136, 110, 137,
-        109, 138, 108, 107,
+        123, 124, 122, 125, 121, 126, 120, 127, 119, 128, 118, 129, 117, 130, 116, 131, 115, 132,
+        114, 133, 113, 134, 112, 135, 111, 136, 110, 137, 109, 138, 108, 107,
     ];
     let length = regions[9].len();
     let skip = if 32 > length { 32 - length } else { 0 };
@@ -231,7 +263,11 @@ pub fn number_aho(
     if insertions > 26 {
         return (Vec::new(), startindex, endindex);
     } else if insertions > 0 {
-        let insertat = annotations.iter().position(|a| a.0 == 123 && a.1 == " ").unwrap() + 1;
+        let insertat = annotations
+            .iter()
+            .position(|a| a.0 == 123 && a.1 == " ")
+            .unwrap()
+            + 1;
         let ins_annotations: Vec<(i32, String)> = (0..insertions)
             .map(|a| (123, ALPHABET[a].to_string()))
             .collect();

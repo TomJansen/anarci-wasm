@@ -70,10 +70,7 @@ pub fn validate_protein_sequence(seq: &str) -> bool {
 
 pub fn validate_dna_sequence(seq: &str) -> bool {
     const DNA: &[u8] = b"ACGTUNRYKMSWBDHV";
-    seq.len() < 100000
-        && seq
-            .bytes()
-            .all(|b| DNA.contains(&b.to_ascii_uppercase()))
+    seq.len() < 100000 && seq.bytes().all(|b| DNA.contains(&b.to_ascii_uppercase()))
 }
 
 pub fn translate_six_frames(dna: &str) -> Vec<TranslatedFrame> {

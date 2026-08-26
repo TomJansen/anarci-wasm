@@ -91,14 +91,7 @@ pub struct NumberingEntry {
 
 #[wasm_bindgen]
 pub fn number_sequences(fasta_text: &str, scheme: &str, bit_score_threshold: f64) -> String {
-    number_sequences_with_options(
-        fasta_text,
-        scheme,
-        bit_score_threshold,
-        "[]",
-        "",
-        "protein",
-    )
+    number_sequences_with_options(fasta_text, scheme, bit_score_threshold, "[]", "", "protein")
 }
 
 #[wasm_bindgen]
@@ -339,8 +332,7 @@ fn number_domains_from_hits(
                 if let (Some(frame), Some(dna_len), Some(start), Some(end)) =
                     (translation, original_dna_len, start, end)
                 {
-                    let (nt_start, nt_end) =
-                        aa_hit_to_nt_range(frame, dna_len, start, end + 1);
+                    let (nt_start, nt_end) = aa_hit_to_nt_range(frame, dna_len, start, end + 1);
                     (frame.label.clone(), Some(nt_start), Some(nt_end))
                 } else {
                     (String::new(), None, None)
@@ -365,10 +357,7 @@ fn number_domains_from_hits(
                     let hi = seq_end.min(chars.len());
 
                     // Nearest start codon (M) at or before the domain start.
-                    let before_start = chars[..lo]
-                        .iter()
-                        .rposition(|&c| c == 'M')
-                        .unwrap_or(0);
+                    let before_start = chars[..lo].iter().rposition(|&c| c == 'M').unwrap_or(0);
                     let before: String = chars[before_start..lo].iter().collect();
 
                     // First true stop at or after the domain end bounds the back
@@ -584,10 +573,8 @@ fn rescue_missing_j_region(
         return state_vector.to_vec();
     }
 
-    let Some(&((last_state, _), Some(last_seq_index))) = state_vector
-        .iter()
-        .rev()
-        .find(|entry| entry.1.is_some())
+    let Some(&((last_state, _), Some(last_seq_index))) =
+        state_vector.iter().rev().find(|entry| entry.1.is_some())
     else {
         return state_vector.to_vec();
     };
@@ -615,15 +602,21 @@ fn rescue_missing_j_region(
     }
 
     let remaining = &sequence[cys_seq_index + 1..];
-    let rescue_hits = select_domains(&rustyhmmer_engine::search_hits(remaining, 10.0).unwrap_or_default());
+    let rescue_hits =
+        select_domains(&rustyhmmer_engine::search_hits(remaining, 10.0).unwrap_or_default());
     let Some(rescue_hit) = rescue_hits.first() else {
         return state_vector.to_vec();
     };
 
     let (rescue_species, rescue_chain) = parse_hmm_name(&rescue_hit.hmm_name);
     let rescue_hmm_length = germline::get_hmm_length(&rescue_species, &rescue_chain);
-    let rescue_state_vector =
-        path_to_state_vector(rescue_hit, remaining.len(), 0, rescue_hits.len(), rescue_hmm_length);
+    let rescue_state_vector = path_to_state_vector(
+        rescue_hit,
+        remaining.len(),
+        0,
+        rescue_hits.len(),
+        rescue_hmm_length,
+    );
     let Some(first_rescue_state) = rescue_state_vector.first().map(|entry| entry.0 .0) else {
         return state_vector.to_vec();
     };
@@ -702,29 +695,43 @@ impl PimTree {
     fn leaves(&self, out: &mut Vec<usize>) {
         match self {
             PimTree::Leaf(i) => out.push(*i),
-            PimTree::Node(l, r) => { l.leaves(out); r.leaves(out); }
+            PimTree::Node(l, r) => {
+                l.leaves(out);
+                r.leaves(out);
+            }
         }
     }
 }
 
 fn upgma_order(n: usize, dist: &mut Vec<Vec<f64>>) -> Vec<usize> {
-    if n <= 1 { return (0..n).collect(); }
+    if n <= 1 {
+        return (0..n).collect();
+    }
     let mut sizes = vec![1usize; n];
     let mut trees: Vec<Option<PimTree>> = (0..n).map(|i| Some(PimTree::Leaf(i))).collect();
     let mut active = vec![true; n];
     for _ in 0..n - 1 {
         let (mut min_d, mut mi, mut mj) = (f64::INFINITY, 0, 0);
         for i in 0..n {
-            if !active[i] { continue; }
+            if !active[i] {
+                continue;
+            }
             for j in i + 1..n {
-                if active[j] && dist[i][j] < min_d { min_d = dist[i][j]; mi = i; mj = j; }
+                if active[j] && dist[i][j] < min_d {
+                    min_d = dist[i][j];
+                    mi = i;
+                    mj = j;
+                }
             }
         }
         let (si, sj) = (sizes[mi], sizes[mj]);
         for k in 0..n {
-            if !active[k] || k == mi || k == mj { continue; }
+            if !active[k] || k == mi || k == mj {
+                continue;
+            }
             let d = (dist[mi][k] * si as f64 + dist[mj][k] * sj as f64) / (si + sj) as f64;
-            dist[mi][k] = d; dist[k][mi] = d;
+            dist[mi][k] = d;
+            dist[k][mi] = d;
         }
         let (ti, tj) = (trees[mi].take().unwrap(), trees[mj].take().unwrap());
         trees[mi] = Some(PimTree::Node(Box::new(ti), Box::new(tj)));
@@ -740,29 +747,55 @@ fn upgma_order(n: usize, dist: &mut Vec<Vec<f64>>) -> Vec<usize> {
 fn pim_cdr_ranges(scheme: &str, chain_class: &str) -> Vec<(i32, i32)> {
     let cc = if chain_class == "K" { "L" } else { chain_class };
     match (scheme, cc) {
-        ("imgt", _)       => vec![(27, 38), (56, 65), (105, 117)],
-        ("chothia", "H")  => vec![(26, 32), (52, 56), (95, 102)],
-        ("chothia", _)    => vec![(24, 34), (50, 56), (89, 97)],
-        ("kabat", "H")    => vec![(31, 35), (50, 65), (95, 102)],
-        ("kabat", _)      => vec![(24, 34), (50, 56), (89, 97)],
-        ("martin", "H")   => vec![(26, 32), (52, 56), (95, 102)],
-        ("martin", _)     => vec![(24, 34), (50, 56), (89, 97)],
-        ("aho", _)        => vec![(25, 42), (58, 77), (107, 138)],
-        ("wolfguy", "H")  => vec![(151, 199), (251, 299), (331, 399)],
-        ("wolfguy", _)    => vec![(551, 599), (651, 699), (751, 799)],
-        _                 => vec![],
+        ("imgt", _) => vec![(27, 38), (56, 65), (105, 117)],
+        ("chothia", "H") => vec![(26, 32), (52, 56), (95, 102)],
+        ("chothia", _) => vec![(24, 34), (50, 56), (89, 97)],
+        ("kabat", "H") => vec![(31, 35), (50, 65), (95, 102)],
+        ("kabat", _) => vec![(24, 34), (50, 56), (89, 97)],
+        ("martin", "H") => vec![(26, 32), (52, 56), (95, 102)],
+        ("martin", _) => vec![(24, 34), (50, 56), (89, 97)],
+        ("aho", _) => vec![(25, 42), (58, 77), (107, 138)],
+        ("wolfguy", "H") => vec![(151, 199), (251, 299), (331, 399)],
+        ("wolfguy", _) => vec![(551, 599), (651, 699), (751, 799)],
+        _ => vec![],
     }
 }
 
 fn pim_pos_filter(scope: &str, scheme: &str, chain_class: &str) -> Option<HashSet<i32>> {
-    if scope == "full" { return None; }
+    if scope == "full" {
+        return None;
+    }
     let ranges = pim_cdr_ranges(scheme, chain_class);
     let mut f = HashSet::new();
     match scope {
-        "cdr1" => { if let Some(&(s, e)) = ranges.get(0) { for p in s..=e { f.insert(p); } } }
-        "cdr2" => { if let Some(&(s, e)) = ranges.get(1) { for p in s..=e { f.insert(p); } } }
-        "cdr3" => { if let Some(&(s, e)) = ranges.get(2) { for p in s..=e { f.insert(p); } } }
-        "cdrs" => { for &(s, e) in &ranges { for p in s..=e { f.insert(p); } } }
+        "cdr1" => {
+            if let Some(&(s, e)) = ranges.get(0) {
+                for p in s..=e {
+                    f.insert(p);
+                }
+            }
+        }
+        "cdr2" => {
+            if let Some(&(s, e)) = ranges.get(1) {
+                for p in s..=e {
+                    f.insert(p);
+                }
+            }
+        }
+        "cdr3" => {
+            if let Some(&(s, e)) = ranges.get(2) {
+                for p in s..=e {
+                    f.insert(p);
+                }
+            }
+        }
+        "cdrs" => {
+            for &(s, e) in &ranges {
+                for p in s..=e {
+                    f.insert(p);
+                }
+            }
+        }
         _ => {}
     }
     Some(f)
@@ -812,10 +845,14 @@ pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
             if let Some(numbering) = dom["numbering"].as_array() {
                 for entry in numbering {
                     let aa_str = entry["amino_acid"].as_str().unwrap_or("-");
-                    if aa_str == "-" { continue; }
+                    if aa_str == "-" {
+                        continue;
+                    }
                     let pos = entry["position"].as_i64().unwrap_or(0) as i32;
                     if let Some(ref f) = pos_filter {
-                        if !f.contains(&(pos as i32)) { continue; }
+                        if !f.contains(&(pos as i32)) {
+                            continue;
+                        }
                     }
                     let ins = entry["insertion"].as_str().unwrap_or(" ").to_string();
                     let aa = aa_str.chars().next().unwrap_or('-');
@@ -826,20 +863,31 @@ pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
                 chain_order.push(chain_class.to_string());
                 by_chain.insert(chain_class.to_string(), Vec::new());
             }
-            by_chain.get_mut(chain_class).unwrap().push((label, pos_map));
+            by_chain
+                .get_mut(chain_class)
+                .unwrap()
+                .push((label, pos_map));
         }
     }
 
-    if by_chain.is_empty() { return String::new(); }
+    if by_chain.is_empty() {
+        return String::new();
+    }
 
     let scope_label = match scope {
-        "full" => "Full sequence", "cdr1" => "CDR1", "cdr2" => "CDR2",
-        "cdr3" => "CDR3", "cdrs" => "All CDRs", _ => scope,
+        "full" => "Full sequence",
+        "cdr1" => "CDR1",
+        "cdr2" => "CDR2",
+        "cdr3" => "CDR3",
+        "cdrs" => "All CDRs",
+        _ => scope,
     };
 
     let mut output = String::new();
     for (ci, chain_class) in chain_order.iter().enumerate() {
-        if ci > 0 { output.push('\n'); }
+        if ci > 0 {
+            output.push('\n');
+        }
         let entries = by_chain.get(chain_class).unwrap();
         let n = entries.len();
 
@@ -851,19 +899,28 @@ pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
                 let all_keys: HashSet<&(i32, String)> =
                     entries[i].1.keys().chain(entries[j].1.keys()).collect();
                 let total = all_keys.len();
-                let matches = all_keys.iter()
-                    .filter(|&&k| matches!(
-                        (entries[i].1.get(k), entries[j].1.get(k)),
-                        (Some(a), Some(b)) if a == b
-                    ))
+                let matches = all_keys
+                    .iter()
+                    .filter(|&&k| {
+                        matches!(
+                            (entries[i].1.get(k), entries[j].1.get(k)),
+                            (Some(a), Some(b)) if a == b
+                        )
+                    })
                     .count();
-                let id = if total == 0 { 0.0 } else { matches as f64 / total as f64 * 100.0 };
-                ident[i][j] = id; ident[j][i] = id;
+                let id = if total == 0 {
+                    0.0
+                } else {
+                    matches as f64 / total as f64 * 100.0
+                };
+                ident[i][j] = id;
+                ident[j][i] = id;
             }
         }
 
         // UPGMA on distance = 100 − identity
-        let mut dist: Vec<Vec<f64>> = ident.iter()
+        let mut dist: Vec<Vec<f64>> = ident
+            .iter()
             .map(|row| row.iter().map(|&x| 100.0 - x).collect())
             .collect();
         let order = upgma_order(n, &mut dist);
@@ -874,7 +931,9 @@ pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
         ));
         output.push(',');
         for (col, &oi) in order.iter().enumerate() {
-            if col > 0 { output.push(','); }
+            if col > 0 {
+                output.push(',');
+            }
             output.push_str(&pim_csv_escape(&entries[oi].0));
         }
         output.push('\n');

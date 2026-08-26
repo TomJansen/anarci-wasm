@@ -3,7 +3,6 @@
 ///
 /// Wolfguy uses large position numbers (H: 100-400, L: 500-800) and does not
 /// use gap_missing — it returns the flat concatenation of regions instead.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
@@ -381,7 +380,8 @@ pub fn number_wolfguy_heavy(
     }
 
     let length = regions[1].len();
-    let mut annotations: Vec<i32> = ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
+    let mut annotations: Vec<i32> =
+        ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
     annotations.sort();
     numbering[1] = (0..length)
         .map(|i| ((annotations[i], " ".to_string()), regions[1][i].1))
@@ -404,7 +404,8 @@ pub fn number_wolfguy_heavy(
     ordered_deletions.extend_from_slice(&cdr2_inner);
 
     let length = regions[3].len();
-    let mut annotations: Vec<i32> = ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
+    let mut annotations: Vec<i32> =
+        ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
     annotations.sort();
     numbering[3] = (0..length)
         .map(|i| ((annotations[i], " ".to_string()), regions[3][i].1))
@@ -686,12 +687,16 @@ fn get_wolfguy_l1(seq: &[NumberedResidue], length: usize) -> Vec<i32> {
         Canonical {
             _name: "13a",
             consensus: b"SGSSSNIGNNYVS",
-            positions: &[551, 552, 554, 555, 556, 557, 561, 562, 571, 572, 597, 598, 599],
+            positions: &[
+                551, 552, 554, 555, 556, 557, 561, 562, 571, 572, 597, 598, 599,
+            ],
         },
         Canonical {
             _name: "13b",
             consensus: b"TRSSGSLANYYVQ",
-            positions: &[551, 552, 553, 554, 556, 561, 562, 563, 571, 572, 597, 598, 599],
+            positions: &[
+                551, 552, 553, 554, 556, 561, 562, 563, 571, 572, 597, 598, 599,
+            ],
         },
     ];
 
@@ -699,19 +704,25 @@ fn get_wolfguy_l1(seq: &[NumberedResidue], length: usize) -> Vec<i32> {
         Canonical {
             _name: "14a",
             consensus: b"RSSTGAVTTSNYAN",
-            positions: &[551, 552, 553, 554, 555, 561, 562, 563, 564, 571, 572, 597, 598, 599],
+            positions: &[
+                551, 552, 553, 554, 555, 561, 562, 563, 564, 571, 572, 597, 598, 599,
+            ],
         },
         Canonical {
             _name: "14b",
             consensus: b"TGTSSDVGGYNYVS",
-            positions: &[551, 552, 554, 555, 556, 557, 561, 562, 571, 572, 596, 597, 598, 599],
+            positions: &[
+                551, 552, 554, 555, 556, 557, 561, 562, 571, 572, 596, 597, 598, 599,
+            ],
         },
     ];
 
     let l1_15: &[Canonical] = &[Canonical {
         _name: "15",
         consensus: b"XXXXXXXXXXXXXXX",
-        positions: &[551, 552, 553, 556, 561, 562, 563, 581, 582, 594, 595, 596, 597, 598, 599],
+        positions: &[
+            551, 552, 553, 556, 561, 562, 563, 581, 582, 594, 595, 596, 597, 598, 599,
+        ],
     }];
 
     let l1_16: &[Canonical] = &[Canonical {
@@ -772,7 +783,8 @@ fn get_wolfguy_l1(seq: &[NumberedResidue], length: usize) -> Vec<i32> {
         }
         ordered_deletions.push(575);
 
-        let mut result: Vec<i32> = ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
+        let mut result: Vec<i32> =
+            ordered_deletions[..length.min(ordered_deletions.len())].to_vec();
         result.sort();
         result
     }

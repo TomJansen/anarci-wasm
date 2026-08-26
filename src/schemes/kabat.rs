@@ -1,6 +1,5 @@
 /// Kabat numbering scheme for heavy and light chains.
 /// Direct port of the Python numbering logic from ANARCI schemes.py.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
@@ -117,11 +116,7 @@ pub fn number_kabat_heavy(
         let length = regions[4].len();
         let insertions = if length > 8 { length - 8 } else { 0 };
         // Delete order: 52, 51, 50, 53, 54, 55, 56, 57
-        let front: Vec<(i32, String)> = vec![
-            (50, " ".into()),
-            (51, " ".into()),
-            (52, " ".into()),
-        ];
+        let front: Vec<(i32, String)> = vec![(50, " ".into()), (51, " ".into()), (52, " ".into())];
         let back: Vec<(i32, String)> = vec![
             (53, " ".into()),
             (54, " ".into()),
@@ -239,7 +234,11 @@ pub fn number_kabat_light(
             (34, " ".into()),
         ];
         let front_take = length.min(4);
-        let back_skip = if length >= 11 { 0 } else { (11 - length).min(7) };
+        let back_skip = if length >= 11 {
+            0
+        } else {
+            (11 - length).min(7)
+        };
         let mut annotations: Vec<(i32, String)> = Vec::new();
         annotations.extend_from_slice(&front[..front_take]);
         for i in 0..insertions {
@@ -256,10 +255,7 @@ pub fn number_kabat_light(
         let length = regions[3].len();
         let insertions = if length > 4 { length - 4 } else { 0 };
         if insertions > 0 {
-            let mut annotations: Vec<(i32, String)> = vec![
-                (51, " ".into()),
-                (52, " ".into()),
-            ];
+            let mut annotations: Vec<(i32, String)> = vec![(51, " ".into()), (52, " ".into())];
             for i in 0..insertions {
                 annotations.push((52, ALPHABET[i].to_string()));
             }

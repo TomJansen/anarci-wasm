@@ -133,17 +133,19 @@ pub fn assign_germline(
     let v_hit = best_gene(&state_sequence, v_chain, &species_order)?;
 
     // J gene uses the species assigned to the V gene.
-    let j_hit = db
-        .j
-        .chain(chain_type)
-        .and_then(|species_map| species_map.species(&v_hit.species))
-        .and_then(|genes| best_gene_within_species(&state_sequence, &v_hit.species, genes));
+    let j_hit =
+        db.j.chain(chain_type)
+            .and_then(|species_map| species_map.species(&v_hit.species))
+            .and_then(|genes| best_gene_within_species(&state_sequence, &v_hit.species, genes));
 
     Some(GermlineAssignment {
         identity_species: v_hit.species.clone(),
         v_gene: v_hit.gene,
         v_identity: v_hit.identity,
-        j_gene: j_hit.as_ref().map(|hit| hit.gene.clone()).unwrap_or_default(),
+        j_gene: j_hit
+            .as_ref()
+            .map(|hit| hit.gene.clone())
+            .unwrap_or_default(),
         j_identity: j_hit.map(|hit| hit.identity).unwrap_or(0.0),
     })
 }
@@ -153,8 +155,7 @@ pub fn assign_germline(
 /// positions in the first J germline for the chain/species, defaulting to 128.
 pub fn get_hmm_length(species: &str, chain_type: &str) -> usize {
     let db = germlines();
-    db.j
-        .chain(chain_type)
+    db.j.chain(chain_type)
         .and_then(|species_map| species_map.species(species))
         .and_then(|genes| genes.0.first())
         .map(|(_, seq)| seq.trim_end_matches('-').chars().count())

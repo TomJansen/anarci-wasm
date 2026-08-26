@@ -120,8 +120,6 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "rustyhmmer"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97726a4fdfafa9c30b8bcbacfbdbb926d7a0cffc9fcf37bbceaa5e1d3aceff5c"
 dependencies = [
  "rayon",
 ]

@@ -1,6 +1,5 @@
 /// IMGT numbering scheme implementation.
 /// Port of number_imgt from Python ANARCI schemes.py.
-
 use crate::alignment::*;
 use std::collections::HashMap;
 
