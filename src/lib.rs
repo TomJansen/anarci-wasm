@@ -1,33 +1,45 @@
 mod alignment;
 mod fasta;
 mod germline;
-mod hmm;
+#[cfg(not(target_arch = "wasm32"))]
+mod hmmer_cli;
+mod rustyhmmer_engine;
 mod schemes;
 
-use serde::Serialize;
+#[cfg(not(target_arch = "wasm32"))]
+pub use hmmer_cli::number_sequences_with_hmmer_cli;
+
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use alignment::{path_to_state_vector, StateVectorEntry};
 use fasta::{InputSequenceType, TranslatedFrame};
 use germline::{assign_germline, available_species as germline_species};
-use hmm::{HmmDatabase, ViterbiHit};
 use schemes::{chain_type_to_class, number_sequence, resolve_scheme_name};
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::sync::OnceLock;
 
 /// Embedded HMM database (compiled into the WASM binary)
-const HMM_DATA: &str = include_str!("../data/ALL.hmm");
+pub(crate) const HMM_DATA: &str = include_str!("../data/ALL.hmm");
 
-/// Lazily parsed HMM database
-static HMM_DB: OnceLock<HmmDatabase> = OnceLock::new();
-
-fn get_db() -> &'static HmmDatabase {
-    HMM_DB.get_or_init(|| HmmDatabase::parse(HMM_DATA))
+/// Result of an HMM hit adapted to the shape ANARCI's numbering code expects.
+#[derive(Clone)]
+pub(crate) struct ViterbiHit {
+    pub hmm_name: String,
+    pub bit_score: f64,
+    pub evalue: f64,
+    pub evalue_text: String,
+    pub seq_start: usize,
+    pub seq_end: usize,
+    pub hmm_start: usize,
+    pub hmm_end: usize,
+    /// State path: (hmm_state_1based, state_type) for each aligned position
+    /// state_type: 'm' = match, 'i' = insert, 'd' = delete
+    pub path: Vec<(usize, char)>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct NumberingResult {
     pub id: String,
     pub sequence: String,
@@ -35,7 +47,7 @@ pub struct NumberingResult {
     pub domains: Vec<DomainResult>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct DomainResult {
     pub domain_index: usize,
     pub species: String,
@@ -70,7 +82,7 @@ pub struct DomainResult {
     pub numbering: Vec<NumberingEntry>,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct NumberingEntry {
     pub position: i32,
     pub insertion: String,
@@ -123,14 +135,12 @@ pub fn number_sequences_with_options(
     let allowed_species = parse_allowed_species(allowed_species_json);
     let allowed_chains = parse_allowed_chains(restrict, scheme_name);
 
-    let db = get_db();
     let sequences = fasta::parse_fasta(fasta_text);
     let mut results: Vec<NumberingResult> = Vec::new();
 
     for (name, seq_str) in &sequences {
         let result = match input_type {
             InputSequenceType::Protein => process_protein_sequence(
-                db,
                 name,
                 seq_str,
                 scheme_name,
@@ -139,7 +149,6 @@ pub fn number_sequences_with_options(
                 &allowed_chains,
             ),
             InputSequenceType::Dna => process_dna_sequence(
-                db,
                 name,
                 seq_str,
                 scheme_name,
@@ -155,7 +164,6 @@ pub fn number_sequences_with_options(
 }
 
 fn process_protein_sequence(
-    db: &HmmDatabase,
     name: &str,
     sequence: &str,
     scheme_name: &str,
@@ -173,7 +181,6 @@ fn process_protein_sequence(
     }
 
     let domains = number_domains(
-        db,
         sequence.as_bytes(),
         scheme_name,
         bit_score_threshold,
@@ -192,7 +199,6 @@ fn process_protein_sequence(
 }
 
 fn process_dna_sequence(
-    db: &HmmDatabase,
     name: &str,
     sequence: &str,
     scheme_name: &str,
@@ -222,7 +228,6 @@ fn process_dna_sequence(
         }
 
         let hits = search_filtered_hits(
-            db,
             frame.sequence.as_bytes(),
             bit_score_threshold,
             allowed_species,
@@ -257,7 +262,6 @@ fn process_dna_sequence(
     let domains = best_translation
         .map(|frame| {
             number_domains_from_hits(
-                db,
                 frame.sequence.as_bytes(),
                 &best_domains,
                 scheme_name,
@@ -277,7 +281,6 @@ fn process_dna_sequence(
 }
 
 fn number_domains(
-    db: &HmmDatabase,
     sequence: &[u8],
     scheme_name: &str,
     bit_score_threshold: f64,
@@ -287,7 +290,6 @@ fn number_domains(
     original_dna_len: Option<usize>,
 ) -> Vec<DomainResult> {
     let hits = search_filtered_hits(
-        db,
         sequence,
         bit_score_threshold,
         allowed_species,
@@ -295,7 +297,6 @@ fn number_domains(
     );
     let domains = select_domains(&hits);
     number_domains_from_hits(
-        db,
         sequence,
         &domains,
         scheme_name,
@@ -306,7 +307,6 @@ fn number_domains(
 }
 
 fn number_domains_from_hits(
-    db: &HmmDatabase,
     sequence: &[u8],
     domains: &[ViterbiHit],
     scheme_name: &str,
@@ -320,7 +320,7 @@ fn number_domains_from_hits(
         let (species, chain_type) = parse_hmm_name(&hit.hmm_name);
         let hmm_length = germline::get_hmm_length(&species, &chain_type);
         let state_vector = path_to_state_vector(hit, sequence.len(), di, domains.len(), hmm_length);
-        let state_vector = rescue_missing_j_region(db, sequence, &state_vector, domains.len());
+        let state_vector = rescue_missing_j_region(sequence, &state_vector, domains.len());
         let germline = assign_germline(&state_vector, sequence, &chain_type, allowed_species);
 
         if let Some((numbered, start, end)) =
@@ -438,14 +438,13 @@ fn number_domains_from_hits(
 }
 
 fn search_filtered_hits(
-    db: &HmmDatabase,
     sequence: &[u8],
     bit_score_threshold: f64,
     allowed_species: Option<&[String]>,
     allowed_chains: &BTreeSet<String>,
 ) -> Vec<ViterbiHit> {
-    let hits: Vec<ViterbiHit> = db
-        .search(sequence, bit_score_threshold)
+    let hits: Vec<ViterbiHit> = rustyhmmer_engine::search_hits(sequence, bit_score_threshold)
+        .unwrap_or_default()
         .into_iter()
         .filter(|hit| {
             let (_, chain_type) = parse_hmm_name(&hit.hmm_name);
@@ -577,7 +576,6 @@ fn stitch_rescued_j_region(
 }
 
 fn rescue_missing_j_region(
-    db: &HmmDatabase,
     sequence: &[u8],
     state_vector: &[StateVectorEntry],
     n_domains: usize,
@@ -617,7 +615,7 @@ fn rescue_missing_j_region(
     }
 
     let remaining = &sequence[cys_seq_index + 1..];
-    let rescue_hits = select_domains(&db.search(remaining, 10.0));
+    let rescue_hits = select_domains(&rustyhmmer_engine::search_hits(remaining, 10.0).unwrap_or_default());
     let Some(rescue_hit) = rescue_hits.first() else {
         return state_vector.to_vec();
     };
@@ -690,7 +688,7 @@ pub fn available_species() -> String {
 
 #[wasm_bindgen]
 pub fn num_profiles() -> usize {
-    get_db().profiles.len()
+    rustyhmmer_engine::num_models()
 }
 
 // ── PIM + UPGMA clustering ────────────────────────────────────────────────────
@@ -896,8 +894,8 @@ pub fn compute_pim(results_json: &str, scope: &str, scheme: &str) -> String {
 mod tests {
     use super::{
         filter_hits_by_allowed_species, number_sequences_with_options, stitch_rescued_j_region,
+        ViterbiHit,
     };
-    use crate::hmm::ViterbiHit;
 
     fn mock_hit(hmm_name: &str, seq_start: usize, seq_end: usize, bit_score: f64) -> ViterbiHit {
         ViterbiHit {

@@ -2,7 +2,7 @@
 
 Antibody Numbering and Receptor ClassIfication — compiled to WebAssembly.
 
-A browser-based port of [ANARCI](https://github.com/oxpig/ANARCI) that runs entirely client-side. No server, no Python, no HMMER installation required.
+A browser-based port of [ANARCI](https://github.com/oxpig/ANARCI) that runs entirely client-side. No server, no Python, no HMMER installation required. Profile-HMM search is handled by the pure-Rust `rustyhmmer` engine and the embedded ANARCI HMMER3 profiles.
 The browser UI uses Web Workers to keep numbering responsive and to parallelize multi-sequence jobs across available CPU cores.
 
 ## Supported numbering schemes
@@ -77,6 +77,13 @@ available_schemes(): string
 // Number of loaded HMM profiles
 num_profiles(): number
 ```
+
+For native Rust parity work, the crate also exposes
+`number_sequences_with_hmmer_cli(...)` on non-`wasm32` targets. This reference
+backend shells out to `hmmscan`, parses HMMER's alignment columns, and feeds
+those state paths through the Rust numbering schemes. It is intended as an
+oracle for checking the RustyHMMER-backed default path against original HMMER
+behavior.
 
 ## License
 

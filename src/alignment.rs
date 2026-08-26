@@ -1,7 +1,7 @@
 /// State vector extraction and core numbering logic.
 /// Ports the key functions from ANARCI's anarci.py and schemes.py.
 
-use crate::hmm::ViterbiHit;
+use crate::ViterbiHit;
 
 /// Insertion alphabet: A-Z, AA-ZZ, then space for "no insertion"
 pub const ALPHABET: &[&str] = &[
