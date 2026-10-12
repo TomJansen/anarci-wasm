@@ -89,6 +89,13 @@ pub fn translate_six_frames(dna: &str) -> Vec<TranslatedFrame> {
 }
 
 fn translate_frame(sequence: &[u8], offset: usize, is_reverse: bool) -> Vec<TranslatedFrame> {
+    // A frame needs at least one complete codon. Without this guard,
+    // `saturating_sub(3)` makes a one- or two-base sequence produce a loop
+    // starting at zero, and the `codon_start..codon_start + 3` slice panics.
+    if offset + 3 > sequence.len() {
+        return Vec::new();
+    }
+
     let frame_no = offset + 1;
     let label = if is_reverse {
         format!("-{frame_no}")
@@ -196,7 +203,14 @@ fn translate_codon(codon: &[u8]) -> Codon {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_fasta, translate_frame};
+    use super::{parse_fasta, translate_frame, translate_six_frames};
+
+    #[test]
+    fn dna_shorter_than_a_codon_has_no_translation_frames() {
+        assert!(translate_six_frames("").is_empty());
+        assert!(translate_six_frames("G").is_empty());
+        assert!(translate_six_frames("GT").is_empty());
+    }
 
     #[test]
     fn internal_stop_is_read_through_as_x_in_one_frame() {
