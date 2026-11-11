@@ -15,9 +15,8 @@ const AA_ROW_Y = TRACE_HEIGHT + 46;
 const PX_PER_SAMPLE = 2.2; // horizontal scale of the chromatogram
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-// Build the collapsible trace panel. `res` is the numbering result for this
-// sequence; `escHtml` is passed in to avoid duplicating the app's escaper.
-export function buildTracePanel(trace, res, escHtml) {
+// Build the collapsible trace panel. `res` is the numbering result for this sequence.
+export function buildTracePanel(trace, res) {
   const wrap = document.createElement('div');
   wrap.className = 'trace-panel';
 
@@ -35,8 +34,9 @@ export function buildTracePanel(trace, res, escHtml) {
   // Render lazily on first expand — SVG for long reads is non-trivial.
   const ensureRendered = () => {
     if (scroller) return;
-    scroller = renderTraceSvg(trace, res, escHtml);
+    scroller = renderTraceSvg(trace, res);
     viewport.appendChild(scroller);
+    viewport.appendChild(scroller._heightControl);
   };
 
   const setOpen = (open, scrollX) => {
@@ -94,7 +94,7 @@ function flashCodon(scroller, k) {
   setTimeout(() => band.remove(), 1500);
 }
 
-function renderTraceSvg(trace, res, escHtml) {
+function renderTraceSvg(trace, res) {
   const { channels, peakLocations, traceLength, bases } = trace;
   const width = Math.max(traceLength * PX_PER_SAMPLE, 200);
   const height = AA_ROW_Y + 18;
@@ -105,14 +105,50 @@ function renderTraceSvg(trace, res, escHtml) {
   svg.setAttribute('height', String(height));
   svg.setAttribute('viewBox', `0 0 ${Math.round(width)} ${height}`);
 
-  // Scale traces to fit TRACE_HEIGHT.
-  let maxVal = 1;
-  for (const base of Object.keys(channels)) {
-    for (const v of channels[base]) if (v > maxVal) maxVal = v;
+  const { codons, firstCodon, firstDomainIdx } = mapTranslation(res, bases.length);
+
+  // Collect one peak height per antibody base, excluding flanking sequence.
+  // Search between neighbouring base-call midpoints to include peak tips even
+  // when the called sample is slightly off-centre. Use all channels and one
+  // shared scale so mixed-base signal ratios remain intact.
+  const domainBaseIdxs = new Set(codons.filter(c => !c.isFlank).flatMap(c => c.baseIdxs));
+  const peakHeights = [];
+  for (const idx of domainBaseIdxs) {
+    const sample = peakLocations[idx];
+    if (!Number.isInteger(sample) || sample < 0 || sample >= traceLength) continue;
+    const left = Math.max(0, Math.ceil(((peakLocations[idx - 1] ?? sample) + sample) / 2));
+    const right = Math.min(traceLength - 1, Math.floor((sample + (peakLocations[idx + 1] ?? sample)) / 2));
+    let peak = 0;
+    for (const data of Object.values(channels)) {
+      for (let i = left; i <= right; i++) {
+        if (data[i] > peak) peak = data[i];
+      }
+    }
+    if (peak > 0) peakHeights.push(peak);
   }
-  const yScale = (TRACE_HEIGHT - 4) / maxVal;
+  peakHeights.sort((a, b) => a - b);
+  const hasDomainPeaks = peakHeights.length > 0;
+  let referenceValue = peakHeights[Math.ceil(peakHeights.length * 0.95) - 1];
+  // Reads without usable antibody peaks retain a whole-read fallback.
+  if (!hasDomainPeaks) {
+    referenceValue = 1;
+    for (const base of Object.keys(channels)) {
+      for (const v of channels[base]) if (v > referenceValue) referenceValue = v;
+    }
+  }
+  // Leave 25% headroom above the 95th-percentile peak at the default slider gain.
+  const yScale = TRACE_HEIGHT * 0.75 / referenceValue;
   const xOf = sampleIdx => sampleIdx * PX_PER_SAMPLE;
   const yOf = v => TRACE_HEIGHT - v * yScale;
+
+  // Clip amplified peaks to the plot, leaving annotations and the baseline fixed.
+  const plot = document.createElementNS(SVG_NS, 'svg');
+  plot.setAttribute('width', String(Math.round(width)));
+  plot.setAttribute('height', String(TRACE_HEIGHT));
+  plot.setAttribute('overflow', 'hidden');
+  const peaks = document.createElementNS(SVG_NS, 'g');
+  plot.appendChild(peaks);
+  svg.appendChild(plot);
 
   // One path per channel.
   for (const base of ['A', 'C', 'G', 'T']) {
@@ -130,12 +166,35 @@ function renderTraceSvg(trace, res, escHtml) {
     path.setAttribute('stroke', CHANNEL_COLORS[base]);
     path.setAttribute('stroke-width', '1');
     path.setAttribute('opacity', '0.85');
-    svg.appendChild(path);
+    path.setAttribute('vector-effect', 'non-scaling-stroke');
+    peaks.appendChild(path);
   }
 
-  const domain = res.domains[0];
-  const frame = domain ? domain.translation_frame : '';
-  const { codons, firstCodon, firstDomainIdx } = mapTranslation(res, bases.length);
+  const heightControl = document.createElement('label');
+  heightControl.className = 'trace-height-control';
+  const controlLabel = document.createElement('span');
+  controlLabel.textContent = 'Peak height';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '10';
+  slider.max = '300';
+  slider.step = '5';
+  slider.value = '100';
+  slider.setAttribute('aria-label', 'Peak height');
+  slider.setAttribute('aria-orientation', 'vertical');
+  const value = document.createElement('output');
+  const updateHeight = () => {
+    const gain = Number(slider.value) / 100;
+    peaks.setAttribute('transform', `translate(0 ${TRACE_HEIGHT * (1 - gain)}) scale(1 ${gain})`);
+    value.value = `${slider.value}%`;
+    slider.setAttribute('aria-valuetext', `${slider.value}%`);
+  };
+  slider.addEventListener('input', updateHeight);
+  updateHeight();
+  heightControl.append(controlLabel, slider, value);
+  heightControl.title = hasDomainPeaks
+    ? '100% automatically scales antibody peaks with 25% headroom'
+    : '100% uses the largest peak with 25% headroom because antibody peaks are unavailable';
 
   const xOfBase = i =>
     peakLocations[i] != null ? xOf(peakLocations[i]) : (i / bases.length) * width;
@@ -227,17 +286,12 @@ function renderTraceSvg(trace, res, escHtml) {
 
   const container = document.createElement('div');
   container.className = 'trace-scroll';
-  const caption = document.createElement('div');
-  caption.className = 'trace-caption';
-  caption.innerHTML = domain
-    ? `Frame <strong>${escHtml(frame || '?')}</strong> &middot; ${escHtml(domain.chain_type)} &middot; score ${domain.bit_score.toFixed(1)}`
-    : 'No antibody domain detected — showing best-effort base calls';
-  container.appendChild(caption);
   container.appendChild(svg);
   container._codonCenters = codonCenters;
   // Grid residue index k maps to codon (firstDomainIdx + k) here, since the
   // flank codons are prepended to the combined array.
   container._domainCodonOffset = firstDomainIdx;
+  container._heightControl = heightControl;
 
   // Jump to the first annotated residue on open, rather than the read start
   // (which is often messy primer / leader sequence).
@@ -265,6 +319,8 @@ function mapTranslation(res, numBases) {
 
   const frame = domain.translation_frame || '+1';
   const isReverse = frame.startsWith('-');
+  // Domain bounds are in the original read; convert to translation coordinates.
+  const domainStartNt = isReverse ? numBases - domain.nt_end : domain.nt_start;
   const numbered = domain.numbering.filter(e => e.amino_acid !== '-');
   const stopSet = new Set(domain.stop_positions || []);
   const flankBefore = domain.flank_before || '';
@@ -288,7 +344,7 @@ function mapTranslation(res, numBases) {
   // Front flank: the N-terminal residues (from the start codon up to the domain)
   // sit immediately before nt_start, one codon per residue, rendered lighter.
   for (let i = 0; i < flankBefore.length; i++) {
-    const codonStartNt = domain.nt_start - (flankBefore.length - i) * 3;
+    const codonStartNt = domainStartNt - (flankBefore.length - i) * 3;
     const c = makeCodon(flankBefore[i], codonStartNt, false, true);
     if (c) codons.push(c);
   }
@@ -296,14 +352,14 @@ function mapTranslation(res, numBases) {
   const firstDomainIdx = codons.length; // first non-flank codon, for initial scroll
   for (let k = 0; k < numbered.length; k++) {
     const residue = numbered[k].amino_acid;
-    const codonStartNt = domain.nt_start + k * 3;
+    const codonStartNt = domainStartNt + k * 3;
     const isStop = stopSet.has(domain.seq_start + k) || residue === 'X';
     const c = makeCodon(residue, codonStartNt, isStop, false);
     if (c) codons.push(c);
   }
 
   // Back flank: the C-terminal residues after the domain, up to the first stop.
-  const ntAfter = domain.nt_start + numbered.length * 3;
+  const ntAfter = domainStartNt + numbered.length * 3;
   for (let i = 0; i < flankAfter.length; i++) {
     const c = makeCodon(flankAfter[i], ntAfter + i * 3, false, true);
     if (c) codons.push(c);

@@ -1295,7 +1295,7 @@ function buildSeqResultCard(res, scheme) {
     // Chromatogram trace panel, if this sequence came from an .ab1 file.
     const trace = window._ab1Traces.get(res.id);
     if (trace) {
-      const panel = buildTracePanel(trace, res, escHtml);
+      const panel = buildTracePanel(trace, res);
       body.appendChild(panel);
       // Clicking a residue cell of the best-scoring domain scrolls the trace to
       // that codon. Delegated so it survives the grid being (re)built.
